@@ -1,0 +1,8 @@
+{
+  "name": "chinese-mitten-crab",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
