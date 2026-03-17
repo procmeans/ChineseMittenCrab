@@ -8,6 +8,18 @@
 
 第一版是 `Claude` 专用，不为 `Codex` 或其他模型做兼容层。
 
+## Current Delivery Snapshot
+
+当前 phase-one baseline 已经把最小骨架落到了代码里：
+
+- 仓库、配置样例、测试骨架
+- Claude CLI home / prompt / exec service
+- runtime thread state、queue、wait hint、follow-up window
+- Feishu 事件归一化、文件下载、rich reply rendering
+- 本机 monitor server 和 LaunchAgent plist installer
+
+也就是说，项目已经从“纯设计文档”进入“可 dry-run、可测试、可继续扩展”的阶段。
+
 ## Product Direction
 
 项目整体思路参考 `SunCodexClaw`，但不照搬其历史结构。

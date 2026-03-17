@@ -8,6 +8,12 @@
 
 **Tech Stack:** Node.js, `node:test`, Feishu/Lark OpenAPI SDK, Claude Code CLI, LaunchAgents, vanilla HTML for the local monitor
 
+**Execution Status:** Tasks 1 through 11 are now implemented on the active development branch, and Task 12 is the final verification and documentation sweep.
+
+**Latest Verification Snapshot:**
+- `npm test` -> 17 passing tests
+- `node tools/feishu_ws_bot.js --account default --dry-run` -> prints Feishu and Claude readiness
+
 ---
 
 ### Task 1: Bootstrap the new repository
