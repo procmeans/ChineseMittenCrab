@@ -14,6 +14,31 @@ function getIncomingFeishuMessage(event) {
   const message = event.event?.message || {};
   const senderId = event.event?.sender?.sender_id?.open_id || '';
   const content = parseMessageContent(message.content);
+  const attachments = [];
+
+  if (content.file_key) {
+    attachments.push({
+      type: message.message_type || 'file',
+      fileKey: content.file_key,
+      fileName: content.file_name || `${content.file_key}.bin`,
+    });
+  }
+
+  if (content.image_key) {
+    attachments.push({
+      type: 'image',
+      fileKey: content.image_key,
+      fileName: content.image_name || `${content.image_key}.image`,
+    });
+  }
+
+  if (content.audio_file_key) {
+    attachments.push({
+      type: 'audio',
+      fileKey: content.audio_file_key,
+      fileName: content.audio_file_name || `${content.audio_file_key}.audio`,
+    });
+  }
 
   return {
     messageId: message.message_id || '',
@@ -22,6 +47,7 @@ function getIncomingFeishuMessage(event) {
     senderId,
     text: content.text || '',
     mentions: message.mentions || [],
+    attachments,
   };
 }
 

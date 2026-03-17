@@ -15,6 +15,7 @@ function normalizeIncomingFeishuEvent(event) {
     text: message.text,
     chatType: message.chatType,
     mentions: message.mentions,
+    attachments: message.attachments,
   };
 }
 

@@ -1,0 +1,19 @@
+{
+  "header": {
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "message": {
+      "message_id": "om_file_message",
+      "chat_id": "oc_group",
+      "chat_type": "group",
+      "message_type": "file",
+      "content": "{\"file_key\":\"file_123\",\"file_name\":\"brief.txt\"}"
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_user"
+      }
+    }
+  }
+}
