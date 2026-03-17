@@ -2,6 +2,8 @@
 
 const { normalizeIncomingFeishuEvent } = require('./lib/platform/feishu/event_projection');
 const { downloadFileToTempFile } = require('./lib/platform/feishu/file_gateway');
+const { applyReplyDirectives } = require('./lib/platform/feishu/reply_directives');
+const { renderFeishuReply } = require('./lib/platform/feishu/reply_rendering');
 
 function readArg(name, fallbackValue) {
   const index = process.argv.indexOf(name);
@@ -44,6 +46,10 @@ async function prepareRuntimeEvent(event, deps = {}) {
   };
 }
 
+function renderBotReply(text) {
+  return renderFeishuReply(applyReplyDirectives(text));
+}
+
 if (require.main === module) {
   main();
 }
@@ -52,4 +58,5 @@ module.exports = {
   main,
   prepareRuntimeEvent,
   readArg,
+  renderBotReply,
 };
