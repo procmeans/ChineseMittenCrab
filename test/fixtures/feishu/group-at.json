@@ -1,0 +1,26 @@
+{
+  "header": {
+    "event_type": "im.message.receive_v1"
+  },
+  "event": {
+    "message": {
+      "message_id": "om_message",
+      "chat_id": "oc_group",
+      "chat_type": "group",
+      "content": "{\"text\":\"@CMR hello from group\"}",
+      "mentions": [
+        {
+          "name": "CMR",
+          "id": {
+            "open_id": "ou_user"
+          }
+        }
+      ]
+    },
+    "sender": {
+      "sender_id": {
+        "open_id": "ou_user"
+      }
+    }
+  }
+}
