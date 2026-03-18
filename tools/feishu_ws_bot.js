@@ -68,8 +68,9 @@ function main() {
 
   // Load secrets
   const secrets = loadLocalSecrets();
-  const appId = secrets.app_id;
-  const appSecret = secrets.app_secret;
+  const feishuSecrets = secrets.feishu || secrets;
+  const appId = feishuSecrets.app_id;
+  const appSecret = feishuSecrets.app_secret;
 
   if (!appId || !appSecret) {
     console.error('ERROR: Missing app_id or app_secret in config/secrets/local.yaml');

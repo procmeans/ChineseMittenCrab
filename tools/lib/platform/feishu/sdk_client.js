@@ -55,12 +55,11 @@ function createFeishuSdkClient({ appId, appSecret, Lark }) {
       const wsClient = new lark.WSClient({
         appId,
         appSecret,
-        eventDispatcher,
       });
 
       return {
         start() {
-          return wsClient.start();
+          return wsClient.start({ eventDispatcher });
         },
       };
     },
