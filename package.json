@@ -5,5 +5,8 @@
   "scripts": {
     "test": "node --test test/*.test.js",
     "feishu:bot": "node tools/feishu_ws_bot.js"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0"
   }
 }
