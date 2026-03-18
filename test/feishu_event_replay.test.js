@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const fixture = require('./fixtures/feishu/group-at.json');
 const fileFixture = require('./fixtures/feishu/file-message.json');
+const replyFixture = require('./fixtures/feishu/reply-message.json');
 const {
   normalizeIncomingFeishuEvent,
 } = require('../tools/lib/platform/feishu/event_projection');
@@ -24,4 +25,12 @@ test('file fixture keeps attachment metadata for downstream download', () => {
   assert.equal(normalized.attachments.length, 1);
   assert.equal(normalized.attachments[0].fileKey, 'file_123');
   assert.equal(normalized.attachments[0].fileName, 'brief.txt');
+});
+
+test('reply fixture preserves parentId and rootId', () => {
+  const normalized = normalizeIncomingFeishuEvent(replyFixture);
+
+  assert.equal(normalized.parentId, 'om_parent');
+  assert.equal(normalized.rootId, 'om_root');
+  assert.equal(normalized.text, 'what does this mean?');
 });

@@ -116,3 +116,36 @@ test('createBotRuntime serializes same-scope events via taskQueue', async () => 
 
   assert.equal(order.length, 2);
 });
+
+test('shutdown prevents new messages from being processed', async () => {
+  let execCount = 0;
+
+  const runtime = createBotRuntime({
+    prepareRuntimeEvent,
+    renderBotReply,
+    statusStore: createRuntimeStatusStore({ account: 'test' }),
+    replyGateway: createReplyGateway(null),
+    taskQueue: createTaskQueue(),
+    followUpStates: new Map(),
+    runClaudeExec: async () => {
+      execCount++;
+      return { replyText: 'ok', raw: 'ok', stderr: '' };
+    },
+    createDelayedWaitNotice,
+    refreshFollowUpWindow,
+    ensureChatState,
+    claudeExecInput: {},
+    setTimeout: (fn, ms) => 'timer',
+    clearTimeout: () => {},
+    waitHintDelayMs: 3000,
+    waitHintMessage: 'Thinking...',
+  });
+
+  assert.equal(runtime.isShuttingDown, false);
+
+  runtime.shutdown();
+  assert.equal(runtime.isShuttingDown, true);
+
+  await runtime.onMessage(createFixtureEvent({ text: 'ignored' }));
+  assert.equal(execCount, 0);
+});

@@ -15,6 +15,20 @@ function createMockLark() {
             calls.push({ method: 'im.message.reply', params });
             return { code: 0 };
           },
+          get: async (params) => {
+            calls.push({ method: 'im.message.get', params });
+            return {
+              data: {
+                items: [
+                  {
+                    body: {
+                      content: JSON.stringify({ text: 'quoted content' }),
+                    },
+                  },
+                ],
+              },
+            };
+          },
         },
         messageResource: {
           get: async (params) => {
@@ -96,6 +110,22 @@ test('downloadMessageResource calls im.messageResource.get', async () => {
   assert.equal(getCall.params.path.message_id, 'msg-789');
   assert.equal(getCall.params.path.file_key, 'file-key-1');
   assert.ok(Buffer.isBuffer(result));
+});
+
+test('getMessageContent fetches and parses quoted message text', async () => {
+  const mockLark = createMockLark();
+  const client = createFeishuSdkClient({
+    appId: 'app1',
+    appSecret: 'secret1',
+    Lark: mockLark,
+  });
+
+  const text = await client.getMessageContent('msg-parent');
+
+  const getCall = mockLark.calls.find((c) => c.method === 'im.message.get');
+  assert.ok(getCall);
+  assert.equal(getCall.params.path.message_id, 'msg-parent');
+  assert.equal(text, 'quoted content');
 });
 
 test('createWsDispatcher registers handlers and returns startable', () => {

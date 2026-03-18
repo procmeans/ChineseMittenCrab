@@ -48,6 +48,8 @@ function getIncomingFeishuMessage(event) {
     text: content.text || '',
     mentions: message.mentions || [],
     attachments,
+    parentId: message.parent_id || '',
+    rootId: message.root_id || '',
   };
 }
 

@@ -28,9 +28,14 @@ function readArg(name, fallbackValue) {
 
 function createBotRuntime(deps) {
   const { taskQueue, statusStore } = deps;
+  let shuttingDown = false;
 
   return {
     async onMessage(rawEvent) {
+      if (shuttingDown) {
+        return;
+      }
+
       const normalized = normalizeIncomingFeishuEvent(rawEvent);
       const taskKey = normalized.taskKey;
 
@@ -41,6 +46,14 @@ function createBotRuntime(deps) {
 
     getStatus() {
       return statusStore.getSnapshot();
+    },
+
+    shutdown() {
+      shuttingDown = true;
+    },
+
+    get isShuttingDown() {
+      return shuttingDown;
     },
   };
 }
@@ -116,6 +129,19 @@ function main() {
   // Start WebSocket connection
   dispatcher.start();
   console.log(`FEISHU_WS_BOT_START account=${accountName}`);
+
+  // Graceful shutdown
+  function onShutdownSignal(signal) {
+    if (runtime.isShuttingDown) {
+      return;
+    }
+
+    runtime.shutdown();
+    console.log(`FEISHU_WS_BOT_STOP account=${accountName} signal=${signal}`);
+  }
+
+  process.on('SIGTERM', () => onShutdownSignal('SIGTERM'));
+  process.on('SIGINT', () => onShutdownSignal('SIGINT'));
 }
 
 async function prepareRuntimeEvent(event, deps = {}) {
@@ -132,9 +158,20 @@ async function prepareRuntimeEvent(event, deps = {}) {
     );
   }
 
+  let quotedText = '';
+
+  if (normalized.parentId && fileClient && typeof fileClient.getMessageContent === 'function') {
+    try {
+      quotedText = await fileClient.getMessageContent(normalized.parentId);
+    } catch (_) {
+      // best-effort: if fetching quoted message fails, continue without it
+    }
+  }
+
   return {
     ...normalized,
     files,
+    quotedText,
   };
 }
 

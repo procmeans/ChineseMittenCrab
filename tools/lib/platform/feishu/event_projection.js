@@ -16,6 +16,8 @@ function normalizeIncomingFeishuEvent(event) {
     chatType: message.chatType,
     mentions: message.mentions,
     attachments: message.attachments,
+    parentId: message.parentId,
+    rootId: message.rootId,
   };
 }
 

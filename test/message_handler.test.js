@@ -142,6 +142,18 @@ test('with attachments: file paths included in prompt', () => {
   assert.ok(prompt.includes('[Attachment: /tmp/image.png]'));
 });
 
+test('quoted text is prepended to prompt', () => {
+  const event = {
+    text: 'what does this mean?',
+    quotedText: 'the original message content',
+    files: [],
+  };
+
+  const prompt = buildPromptFromEvent(event);
+  assert.ok(prompt.startsWith('[Quoted message]: the original message content'));
+  assert.ok(prompt.includes('what does this mean?'));
+});
+
 test('follow-up window is refreshed after reply', async () => {
   const deps = createStubDeps();
   const event = createFixtureEvent();

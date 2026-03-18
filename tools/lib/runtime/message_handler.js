@@ -76,6 +76,10 @@ async function handleIncomingMessage(deps, rawEvent) {
 function buildPromptFromEvent(event) {
   const parts = [];
 
+  if (event.quotedText) {
+    parts.push(`[Quoted message]: ${event.quotedText}`);
+  }
+
   if (event.text) {
     parts.push(event.text);
   }

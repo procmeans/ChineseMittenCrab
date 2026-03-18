@@ -23,6 +23,21 @@ function createFeishuSdkClient({ appId, appSecret, Lark }) {
       });
     },
 
+    async getMessageContent(messageId) {
+      const resp = await client.im.message.get({
+        path: { message_id: messageId },
+      });
+      const body = resp?.data?.items?.[0] || resp?.data || {};
+      const content = body.body?.content || body.content || '';
+
+      try {
+        const parsed = typeof content === 'string' ? JSON.parse(content) : content;
+        return parsed.text || '';
+      } catch (_) {
+        return String(content);
+      }
+    },
+
     async downloadMessageResource(messageId, fileKey) {
       const resp = await client.im.messageResource.get({
         path: { message_id: messageId, file_key: fileKey },
