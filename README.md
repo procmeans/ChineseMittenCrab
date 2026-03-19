@@ -224,3 +224,7 @@ feishu_ws_bot.js          入口，WebSocket 连接，消息去重，队列调�
 - 订阅方式：长连接（WebSocket）
 - 订阅事件：`im.message.receive_v1`
 - 权限：`im:message`、`im:message:send_as_bot`、`im:file`（如需文件功能）
+
+## 联系开发者
+
+- 微信：18038001212
