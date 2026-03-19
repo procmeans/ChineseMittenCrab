@@ -11,5 +11,5 @@ test('launchagent installer renders a plist for an account', async () => {
   const { stdout } = await execFile('bash', [scriptPath, 'install', 'default']);
 
   assert.match(stdout, /plist/);
-  assert.match(stdout, /ChineseMittenCrab.default/);
+  assert.match(stdout, /cmr.default/);
 });

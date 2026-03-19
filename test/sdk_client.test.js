@@ -44,9 +44,9 @@ function createMockLark() {
     constructor() {
       this.handlers = {};
     }
-    register(type, handler) {
-      this.handlers[type] = handler;
-      calls.push({ method: 'EventDispatcher.register', type });
+    register(handles) {
+      Object.assign(this.handlers, handles);
+      calls.push({ method: 'EventDispatcher.register', handles });
     }
   }
 
@@ -145,7 +145,7 @@ test('createWsDispatcher registers handlers and returns startable', () => {
     (c) => c.method === 'EventDispatcher.register'
   );
   assert.ok(registerCall);
-  assert.equal(registerCall.type, 'im.message.receive_v1');
+  assert.equal(typeof registerCall.handles['im.message.receive_v1'], 'function');
 
   dispatcher.start();
 

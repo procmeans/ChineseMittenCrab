@@ -6,9 +6,9 @@ const { runClaudeExec } = require('../tools/lib/claude/exec_service');
 test('runClaudeExec returns parsed stdout text', async () => {
   const calls = [];
   const deps = {
-    execFile: async (bin, args, options) => {
+    spawn: async (bin, args, options) => {
       calls.push({ bin, args, options });
-      return { stdout: 'hello\n', stderr: '' };
+      return { stdout: 'hello\n', stderr: '', code: 0 };
     },
   };
 

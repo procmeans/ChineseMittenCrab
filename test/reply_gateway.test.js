@@ -81,8 +81,7 @@ test('sendTextReply returns stub when no client provided', async () => {
   const gw = createReplyGateway(null);
   const result = await gw.sendTextReply('msg-5', 'hello');
 
-  assert.equal(result.messageId, 'msg-5');
-  assert.equal(result.text, 'hello');
+  assert.deepEqual(result, { replyMessageId: null });
 });
 
 test('sendCardReply returns stub when no client provided', async () => {

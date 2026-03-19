@@ -2,6 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { handleIncomingMessage, buildPromptFromEvent } = require('../tools/lib/runtime/message_handler');
+const { createBotRuntime } = require('../tools/feishu_ws_bot');
+const { createTaskQueue } = require('../tools/lib/runtime/task_queue');
+const { createRuntimeStatusStore } = require('../tools/lib/monitor/runtime_status_store');
 
 function createFixtureEvent(overrides = {}) {
   return {
@@ -25,7 +28,6 @@ function createStubDeps(overrides = {}) {
   const { applyReplyDirectives } = require('../tools/lib/platform/feishu/reply_directives');
   const { renderFeishuReply } = require('../tools/lib/platform/feishu/reply_rendering');
   const { createRuntimeStatusStore } = require('../tools/lib/monitor/runtime_status_store');
-  const { createDelayedWaitNotice } = require('../tools/lib/runtime/lightweight_wait_hint');
   const { refreshFollowUpWindow } = require('../tools/lib/runtime/follow_up_window');
   const { ensureChatState } = require('../tools/lib/runtime/thread_state');
 
@@ -45,9 +47,17 @@ function createStubDeps(overrides = {}) {
     replyGateway: overrides.replyGateway || {
       sendTextReply: async (messageId, text) => {
         calls.push({ method: 'sendTextReply', messageId, text });
+        return { replyMessageId: 'reply-msg-1' };
+      },
+      patchTextReply: async (replyMessageId, text) => {
+        calls.push({ method: 'patchTextReply', replyMessageId, text });
       },
       sendCardReply: async (messageId, card) => {
         calls.push({ method: 'sendCardReply', messageId, card });
+        return { replyMessageId: 'reply-msg-1' };
+      },
+      patchCardReply: async (replyMessageId, card) => {
+        calls.push({ method: 'patchCardReply', replyMessageId, card });
       },
       sendReply: async (messageId, rendered) => {
         calls.push({ method: 'sendReply', messageId, rendered });
@@ -58,19 +68,9 @@ function createStubDeps(overrides = {}) {
       raw: 'Claude says hi',
       stderr: '',
     })),
-    createDelayedWaitNotice,
     refreshFollowUpWindow,
     ensureChatState,
     claudeExecInput: overrides.claudeExecInput || {},
-    setTimeout: (fn, ms) => {
-      calls.push({ method: 'setTimeout', ms });
-      return 'timer-1';
-    },
-    clearTimeout: () => {
-      calls.push({ method: 'clearTimeout' });
-    },
-    waitHintDelayMs: 3000,
-    waitHintMessage: 'Thinking...',
   };
 }
 
@@ -84,9 +84,14 @@ test('happy path: event → Claude → reply sent, status idle→busy→idle', a
   assert.equal(result.result.replyText, 'Claude says hi');
   assert.equal(deps.statusStore.getSnapshot().status, 'idle');
 
-  const sendReplyCall = deps.calls.find((c) => c.method === 'sendReply');
-  assert.ok(sendReplyCall);
-  assert.equal(sendReplyCall.messageId, 'msg-100');
+  // Initial progress card sent immediately
+  const initialReply = deps.calls.find((c) => c.method === 'sendCardReply');
+  assert.ok(initialReply);
+  assert.equal(initialReply.messageId, 'msg-100');
+
+  // Final response patches the progress card in-place
+  const finalPatch = deps.calls.find((c) => c.method === 'patchCardReply');
+  assert.ok(finalPatch);
 });
 
 test('Claude error: error reply sent, status → error', async () => {
@@ -97,38 +102,15 @@ test('Claude error: error reply sent, status → error', async () => {
   });
   const event = createFixtureEvent();
 
-  await assert.rejects(
-    () => handleIncomingMessage(deps, event),
-    { message: 'claude crashed' }
-  );
+  await handleIncomingMessage(deps, event);
 
   assert.equal(deps.statusStore.getSnapshot().status, 'error');
 
   const errorReply = deps.calls.find(
-    (c) => c.method === 'sendTextReply' && c.text.includes('claude crashed')
+    (c) => (c.method === 'patchCardReply' || c.method === 'sendTextReply') &&
+      JSON.stringify(c).includes('claude crashed')
   );
   assert.ok(errorReply);
-});
-
-test('wait hint is scheduled with configured delay', async () => {
-  const deps = createStubDeps();
-  const event = createFixtureEvent();
-
-  await handleIncomingMessage(deps, event);
-
-  const timerCall = deps.calls.find((c) => c.method === 'setTimeout');
-  assert.ok(timerCall);
-  assert.equal(timerCall.ms, 3000);
-});
-
-test('wait hint is dismissed when Claude responds', async () => {
-  const deps = createStubDeps();
-  const event = createFixtureEvent();
-
-  await handleIncomingMessage(deps, event);
-
-  const clearCall = deps.calls.find((c) => c.method === 'clearTimeout');
-  assert.ok(clearCall);
 });
 
 test('with attachments: file paths included in prompt', () => {
@@ -164,4 +146,53 @@ test('follow-up window is refreshed after reply', async () => {
   const chatState = deps.followUpStates.get(taskKey);
   assert.ok(chatState);
   assert.ok(chatState.expiresAt > Date.now());
+});
+
+test('onMessage returns immediately without waiting for task to complete', async () => {
+  let taskStarted = false;
+  let taskResolve;
+  const taskPromise = new Promise((resolve) => { taskResolve = resolve; });
+
+  const taskQueue = createTaskQueue();
+  const statusStore = createRuntimeStatusStore({ account: 'test' });
+
+  const runtime = createBotRuntime({
+    taskQueue,
+    statusStore,
+    prepareRuntimeEvent: async (raw) => {
+      const { normalizeIncomingFeishuEvent } = require('../tools/lib/platform/feishu/event_projection');
+      const normalized = normalizeIncomingFeishuEvent(raw);
+      return { ...normalized, files: [] };
+    },
+    renderBotReply: () => ({ card: {}, filePaths: [] }),
+    replyGateway: {
+      sendCardReply: async () => ({ replyMessageId: 'r1' }),
+      patchCardReply: async () => {},
+      sendReply: async () => {},
+    },
+    runClaudeExec: async () => {
+      taskStarted = true;
+      await taskPromise;
+      return { replyText: 'done', raw: 'done', stderr: '' };
+    },
+    followUpStates: new Map(),
+    refreshFollowUpWindow: () => {},
+    ensureChatState: () => ({ history: [] }),
+    claudeExecInput: {},
+    persistState: () => {},
+  });
+
+  const event = createFixtureEvent();
+  // onMessage should return synchronously (fire-and-forget)
+  const result = runtime.onMessage(event);
+  assert.equal(result, undefined, 'onMessage should return undefined (not a promise)');
+
+  // Give the microtask queue a tick for the enqueue to start
+  await new Promise((r) => setTimeout(r, 50));
+
+  // The task should have started but not completed
+  assert.ok(taskStarted, 'task should have started');
+
+  // Clean up: resolve the pending task
+  taskResolve();
 });

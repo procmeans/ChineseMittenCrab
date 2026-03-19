@@ -18,6 +18,7 @@ function normalizeIncomingFeishuEvent(event) {
     attachments: message.attachments,
     parentId: message.parentId,
     rootId: message.rootId,
+    createTime: message.createTime,
   };
 }
 

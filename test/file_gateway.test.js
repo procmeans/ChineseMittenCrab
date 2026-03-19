@@ -51,6 +51,10 @@ test('bot preparation includes downloaded files for multimodal inputs', async ()
 test('prepareRuntimeEvent fetches quoted message when parentId present', async () => {
   const result = await prepareRuntimeEvent(replyFixture, {
     fileClient: {
+      getMessageMeta: async (messageId) => {
+        assert.equal(messageId, 'om_parent');
+        return { msgType: 'text', parsed: {} };
+      },
       getMessageContent: async (messageId) => {
         assert.equal(messageId, 'om_parent');
         return 'the original message';

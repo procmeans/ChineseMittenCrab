@@ -11,8 +11,8 @@ function parseMessageContent(content) {
 }
 
 function getIncomingFeishuMessage(event) {
-  const message = event.event?.message || {};
-  const senderId = event.event?.sender?.sender_id?.open_id || '';
+  const message = event.message || event.event?.message || {};
+  const senderId = (event.sender || event.event?.sender)?.sender_id?.open_id || '';
   const content = parseMessageContent(message.content);
   const attachments = [];
 
@@ -50,6 +50,7 @@ function getIncomingFeishuMessage(event) {
     attachments,
     parentId: message.parent_id || '',
     rootId: message.root_id || '',
+    createTime: Number(message.create_time) || 0,
   };
 }
 

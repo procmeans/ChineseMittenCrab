@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+
 async function downloadFileToTempFile(client, messageId, fileKey, options = {}) {
   const downloader =
     client.downloadMessageResource ||
@@ -9,7 +11,11 @@ async function downloadFileToTempFile(client, messageId, fileKey, options = {}) 
   const tmpDir = options.tmpDir || '/tmp';
   const fileName = options.fileName || `${fileKey}.bin`;
   const filePath = path.join(tmpDir, fileName);
-  const content = await downloader(messageId, fileKey);
+
+  const ext = path.extname(fileName).toLowerCase();
+  const type = IMAGE_EXTS.has(ext) ? 'image' : 'file';
+
+  const content = await downloader(messageId, fileKey, type);
 
   fs.writeFileSync(filePath, content);
 

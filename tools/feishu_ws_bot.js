@@ -10,11 +10,12 @@ const { createRuntimeStatusStore } = require('./lib/monitor/runtime_status_store
 const { createTaskQueue } = require('./lib/runtime/task_queue');
 const { createDelayedWaitNotice } = require('./lib/runtime/lightweight_wait_hint');
 const { refreshFollowUpWindow } = require('./lib/runtime/follow_up_window');
-const { ensureChatState } = require('./lib/runtime/thread_state');
+const { ensureChatState, saveStates, loadStates } = require('./lib/runtime/thread_state');
 const { runClaudeExec } = require('./lib/claude/exec_service');
 const { loadLocalSecrets } = require('./lib/config/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { handleIncomingMessage } = require('./lib/runtime/message_handler');
+const os = require('node:os');
 
 function readArg(name, fallbackValue) {
   const index = process.argv.indexOf(name);
@@ -29,19 +30,43 @@ function readArg(name, fallbackValue) {
 function createBotRuntime(deps) {
   const { taskQueue, statusStore } = deps;
   let shuttingDown = false;
+  const seenMessageIds = new Set();
+  const startTime = Date.now();
 
   return {
-    async onMessage(rawEvent) {
+    onMessage(rawEvent) {
       if (shuttingDown) {
         return;
       }
 
       const normalized = normalizeIncomingFeishuEvent(rawEvent);
+      const messageId = normalized.messageId;
+
+      // Skip messages created before this bot instance started
+      if (normalized.createTime && normalized.createTime < startTime) {
+        console.log('STALE_SKIP messageId=' + messageId + ' createTime=' + normalized.createTime);
+        return;
+      }
+
+      if (messageId && seenMessageIds.has(messageId)) {
+        console.log('DEDUP_SKIP messageId=' + messageId);
+        return;
+      }
+      if (messageId) {
+        seenMessageIds.add(messageId);
+        // 防止内存泄漏：只保留最近 1000 条
+        if (seenMessageIds.size > 1000) {
+          seenMessageIds.delete(seenMessageIds.values().next().value);
+        }
+      }
+
       const taskKey = normalized.taskKey;
 
-      await taskQueue.enqueue(taskKey, () =>
+      taskQueue.enqueue(taskKey, () =>
         handleIncomingMessage(deps, rawEvent)
-      );
+      ).catch((err) => {
+        console.error('TASK_ERROR taskKey=' + taskKey, err.message);
+      });
     },
 
     getStatus() {
@@ -58,11 +83,45 @@ function createBotRuntime(deps) {
   };
 }
 
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED_REJECTION:', reason);
+});
+
 function main() {
   const accountName = readArg('--account', 'default');
 
   if (process.argv.includes('--dry-run')) {
-    console.log(`FEISHU_WS_DRY_RUN account=${accountName} claude=ready feishu=ready`);
+    const checks = [];
+
+    // 1. Secrets check
+    try {
+      const secrets = loadLocalSecrets();
+      const feishuSecrets = secrets.feishu || secrets;
+      checks.push(feishuSecrets.app_id && feishuSecrets.app_secret
+        ? 'feishu=ready' : 'feishu=NO_CREDENTIALS');
+    } catch (e) {
+      checks.push('feishu=ERROR:' + e.message);
+    }
+
+    // 2. Account config check
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const configPath = path.join('config', 'feishu', `${accountName}.json`);
+    checks.push(fs.existsSync(configPath)
+      ? 'config=ready' : 'config=MISSING');
+
+    // 3. Claude binary check
+    try {
+      const { execFileSync } = require('node:child_process');
+      execFileSync('claude', ['--version'], { timeout: 5000 });
+      checks.push('claude=ready');
+    } catch (e) {
+      checks.push('claude=NOT_FOUND');
+    }
+
+    const allReady = checks.every(c => c.endsWith('=ready'));
+    console.log(`FEISHU_WS_DRY_RUN account=${accountName} ${checks.join(' ')}`);
+    if (!allReady) process.exitCode = 1;
     return;
   }
 
@@ -100,11 +159,13 @@ function main() {
   const replyGateway = createReplyGateway(sdkClient);
   const statusStore = createRuntimeStatusStore({ account: accountName });
   const taskQueue = createTaskQueue();
-  const followUpStates = new Map();
+  // Load persisted conversation history (only threads still within 5-min TTL)
+  const followUpStates = loadStates(accountName);
+  console.log(`LOADED_STATE threads=${followUpStates.size}`);
 
   // Create bot runtime
   const runtime = createBotRuntime({
-    prepareRuntimeEvent,
+    prepareRuntimeEvent: (event) => prepareRuntimeEvent(event, { fileClient: sdkClient }),
     renderBotReply,
     statusStore,
     replyGateway,
@@ -117,13 +178,20 @@ function main() {
     claudeExecInput: {
       model: config.model,
       account: accountName,
+      cwd: os.homedir(),
     },
+    persistState: () => saveStates(followUpStates, accountName),
   });
 
   // Wire WS dispatcher
   const dispatcher = sdkClient.createWsDispatcher({
     'im.message.receive_v1': async (data) => {
-      await runtime.onMessage(data);
+      console.log('RAW_EVENT:', JSON.stringify(data, null, 2));
+      try {
+        await runtime.onMessage(data);
+      } catch (err) {
+        console.error('MESSAGE_HANDLER_ERROR:', err.message, err.stack);
+      }
     },
   });
 
@@ -161,11 +229,47 @@ async function prepareRuntimeEvent(event, deps = {}) {
 
   let quotedText = '';
 
-  if (normalized.parentId && fileClient && typeof fileClient.getMessageContent === 'function') {
+  if (normalized.parentId && fileClient && typeof fileClient.getMessageMeta === 'function') {
     try {
-      quotedText = await fileClient.getMessageContent(normalized.parentId);
-    } catch (_) {
-      // best-effort: if fetching quoted message fails, continue without it
+      const { msgType, parsed } = await fileClient.getMessageMeta(normalized.parentId);
+      console.log('QUOTED_META parentId=' + normalized.parentId + ' msgType=' + msgType);
+
+      if (msgType === 'file' && parsed.file_key) {
+        // Quoted message is a file — download it and attach
+        const path = require('node:path');
+        const fileName = parsed.file_name || ('quoted_file_' + parsed.file_key);
+        const ext = path.extname(fileName) || '';
+        const tempPath = require('node:path').join('/tmp', fileName);
+        try {
+          const buf = await fileClient.downloadMessageResource(normalized.parentId, parsed.file_key, 'file');
+          require('node:fs').writeFileSync(tempPath, buf);
+          files.push(tempPath);
+          quotedText = '[引用文件: ' + fileName + ']';
+          console.log('QUOTED_FILE downloaded=' + tempPath);
+        } catch (dlErr) {
+          console.log('QUOTED_FILE_DL_ERROR err=' + dlErr.message);
+          quotedText = '[引用文件: ' + fileName + ' (下载失败)]';
+        }
+      } else if (msgType === 'image' && parsed.image_key) {
+        // Quoted message is an image — download it
+        const imageName = 'quoted_image_' + parsed.image_key + '.jpg';
+        const tempPath = '/tmp/' + imageName;
+        try {
+          const buf = await fileClient.downloadMessageResource(normalized.parentId, parsed.image_key, 'image');
+          require('node:fs').writeFileSync(tempPath, buf);
+          files.push(tempPath);
+          quotedText = '[引用图片: ' + imageName + ']';
+          console.log('QUOTED_IMAGE downloaded=' + tempPath);
+        } catch (dlErr) {
+          console.log('QUOTED_IMAGE_DL_ERROR err=' + dlErr.message);
+        }
+      } else {
+        // Text or card — extract text content
+        quotedText = await fileClient.getMessageContent(normalized.parentId);
+        console.log('QUOTED_TEXT result=' + JSON.stringify(quotedText).slice(0, 200));
+      }
+    } catch (err) {
+      console.log('QUOTED_META_ERROR parentId=' + normalized.parentId + ' err=' + err.message);
     }
   }
 
@@ -177,7 +281,8 @@ async function prepareRuntimeEvent(event, deps = {}) {
 }
 
 function renderBotReply(text) {
-  return renderFeishuReply(applyReplyDirectives(text));
+  const { text: cleanText, filePaths } = applyReplyDirectives(text);
+  return { card: renderFeishuReply(cleanText), filePaths };
 }
 
 if (require.main === module) {

@@ -4,7 +4,7 @@ set -euo pipefail
 
 command_name="${1:-status}"
 account_name="${2:-default}"
-label="ChineseMittenCrab.${account_name}"
+label="cmr.${account_name}"
 program_path="$(cd "$(dirname "$0")" && pwd)/feishu_ws_bot.js"
 
 render_plist() {

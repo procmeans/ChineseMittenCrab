@@ -14,7 +14,7 @@ function renderMonitorDashboard(snapshot) {
     '<html>',
     '<head><title>CMR Monitor</title></head>',
     '<body>',
-    `<h1>ChineseMittenCrab Monitor</h1>`,
+    `<h1>cmr Monitor</h1>`,
     `<p>account: ${snapshot.account}</p>`,
     `<p>status: ${snapshot.status}</p>`,
     `<p>updatedAt: ${snapshot.updatedAt}</p>`,
