@@ -166,6 +166,41 @@ function createFeishuSdkClient({ appId, appSecret, Lark }) {
       return { replyMessageId: resp && resp.data && resp.data.message_id };
     },
 
+    // Returns this bot's own open_id in its own app namespace, used by mention_filter to detect
+    // whether incoming group messages are addressed to this bot. Lark SDK doesn't expose /bot/v3/info
+    // as a typed call, so we hit the HTTP endpoint directly. Returns '' on failure (the filter
+    // falls back to "accept everything" when self_open_id is empty so the bot doesn't go silent).
+    async getBotOpenId() {
+      const https = require('node:https');
+      const post = (path, body) => new Promise((resolve, reject) => {
+        const data = JSON.stringify(body || {});
+        const headers = { 'Content-Type': 'application/json', 'Content-Length': data.length };
+        const req = https.request({ host: 'open.feishu.cn', path, method: 'POST', headers }, (res) => {
+          let chunks = '';
+          res.on('data', (c) => { chunks += c; });
+          res.on('end', () => { try { resolve(JSON.parse(chunks)); } catch (e) { reject(e); } });
+        });
+        req.on('error', reject); req.write(data); req.end();
+      });
+      const get = (path, token) => new Promise((resolve, reject) => {
+        const req = https.request({ host: 'open.feishu.cn', path, method: 'GET', headers: { Authorization: 'Bearer ' + token } }, (res) => {
+          let chunks = '';
+          res.on('data', (c) => { chunks += c; });
+          res.on('end', () => { try { resolve(JSON.parse(chunks)); } catch (e) { reject(e); } });
+        });
+        req.on('error', reject); req.end();
+      });
+      try {
+        const tokenResp = await post('/open-apis/auth/v3/tenant_access_token/internal', { app_id: appId, app_secret: appSecret });
+        const token = tokenResp && tokenResp.tenant_access_token;
+        if (!token) return '';
+        const info = await get('/open-apis/bot/v3/info', token);
+        return (info && info.bot && info.bot.open_id) || '';
+      } catch (_) {
+        return '';
+      }
+    },
+
     createWsDispatcher(handlers) {
       const eventDispatcher = new lark.EventDispatcher({});
 

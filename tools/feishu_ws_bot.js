@@ -15,6 +15,7 @@ const { resolveEngine } = require('./lib/runtime/engine_selector');
 const { loadLocalSecrets } = require('./lib/config/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { handleIncomingMessage } = require('./lib/runtime/message_handler');
+const { shouldIgnoreMessage } = require('./lib/runtime/mention_filter');
 
 // Per-account Feishu credentials lookup. Supports two layouts:
 //   feishu: { app_id, app_secret }                            ← single-account (default)
@@ -41,7 +42,7 @@ function readArg(name, fallbackValue) {
 }
 
 function createBotRuntime(deps) {
-  const { taskQueue, statusStore } = deps;
+  const { taskQueue, statusStore, selfOpenId, followUpStates, ignoreUnmentioned } = deps;
   let shuttingDown = false;
   const seenMessageIds = new Set();
   const startTime = Date.now();
@@ -71,6 +72,13 @@ function createBotRuntime(deps) {
         if (seenMessageIds.size > 1000) {
           seenMessageIds.delete(seenMessageIds.values().next().value);
         }
+      }
+
+      // Drop group messages that didn't address this bot (no @ and no active follow-up window).
+      // Keeps multiple bots in the same chat from all replying when one is @-mentioned.
+      if (shouldIgnoreMessage(normalized, { selfOpenId, followUpStates, ignoreUnmentioned })) {
+        console.log('IGNORE_UNADDRESSED messageId=' + messageId + ' chatId=' + normalized.chatId);
+        return;
       }
 
       const taskKey = normalized.taskKey;
@@ -184,6 +192,15 @@ function main() {
   // Create SDK client
   const sdkClient = createFeishuSdkClient({ appId, appSecret });
 
+  // Fire-and-forget self open_id lookup so mention_filter can detect "addressed to this bot".
+  // Empty result disables the filter (bot accepts everything) so a transient API hiccup never
+  // makes the bot go silent.
+  const runtimeRef = { selfOpenId: '' };
+  sdkClient.getBotOpenId().then((openId) => {
+    runtimeRef.selfOpenId = openId || '';
+    console.log(`SELF_OPEN_ID account=${accountName} open_id=${runtimeRef.selfOpenId || '(unavailable, filter disabled)'}`);
+  }).catch(() => {});
+
   // Create runtime infrastructure
   const replyGateway = createReplyGateway(sdkClient);
   const statusStore = createRuntimeStatusStore({ account: accountName });
@@ -206,6 +223,10 @@ function main() {
     ensureChatState,
     execInput: engine.buildInput({ config, accountName }),
     persistState: () => saveStates(followUpStates, accountName),
+    // selfOpenId is read lazily via runtimeRef each onMessage call (it's filled in asynchronously
+    // by getBotOpenId above; until then the filter is bypassed).
+    get selfOpenId() { return runtimeRef.selfOpenId; },
+    ignoreUnmentioned: config.ignore_unmentioned !== false,
   });
 
   // Wire WS dispatcher
