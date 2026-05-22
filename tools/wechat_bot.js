@@ -10,11 +10,10 @@ const { createRuntimeStatusStore } = require('./lib/monitor/runtime_status_store
 const { createTaskQueue } = require('./lib/runtime/task_queue');
 const { refreshFollowUpWindow } = require('./lib/runtime/follow_up_window');
 const { ensureChatState, saveStates, loadStates } = require('./lib/runtime/thread_state');
-const { runClaudeExec } = require('./lib/claude/exec_service');
+const { resolveEngine } = require('./lib/runtime/engine_selector');
 const { loadLocalSecrets } = require('./lib/config/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { handleIncomingMessage } = require('./lib/runtime/message_handler');
-const os = require('node:os');
 
 function readArg(name, fallbackValue) {
   const index = process.argv.indexOf(name);
@@ -113,16 +112,28 @@ function main() {
     const fs = require('node:fs');
     const path = require('node:path');
     const configPath = path.join('config', 'wechat', `${accountName}.json`);
-    checks.push(fs.existsSync(configPath)
-      ? 'config=ready' : 'config=MISSING');
+    const configReady = fs.existsSync(configPath);
+    checks.push(configReady ? 'config=ready' : 'config=MISSING');
 
-    // 3. Claude binary check
+    // 3. Engine binary check — picked from the account config (defaults to claude)
+    let engineName = 'claude';
+    let engineBin = 'claude';
+    try {
+      const accountConfig = configReady
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : {};
+      const engine = resolveEngine(accountConfig);
+      engineName = engine.name;
+      engineBin = engine.bin;
+    } catch (e) {
+      checks.push(`engine=ERROR:${e.message}`);
+    }
     try {
       const { execFileSync } = require('node:child_process');
-      execFileSync('claude', ['--version'], { timeout: 5000 });
-      checks.push('claude=ready');
+      execFileSync(engineBin, ['--version'], { timeout: 5000 });
+      checks.push(`${engineName}=ready`);
     } catch (e) {
-      checks.push('claude=NOT_FOUND');
+      checks.push(`${engineName}=NOT_FOUND`);
     }
 
     const allReady = checks.every(c => c.endsWith('=ready'));
@@ -159,6 +170,10 @@ function main() {
     account: accountConfig,
   });
 
+  // Engine selection — pick claude or codex based on account config
+  const engine = resolveEngine(config);
+  console.log(`ENGINE_SELECTED account=${accountName} engine=${engine.name}`);
+
   const port = Number(portArg || config.port || 8080);
 
   // Create API client and reply infrastructure
@@ -183,14 +198,10 @@ function main() {
     replyGateway,
     taskQueue,
     followUpStates,
-    runClaudeExec,
+    runExec: engine.runExec,
     refreshFollowUpWindow,
     ensureChatState,
-    claudeExecInput: {
-      model: config.model,
-      account: accountName,
-      cwd: os.homedir(),
-    },
+    execInput: engine.buildInput({ config, accountName }),
     persistState: () => saveStates(followUpStates, accountName),
   });
 

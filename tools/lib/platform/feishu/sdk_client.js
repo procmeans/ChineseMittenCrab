@@ -86,12 +86,25 @@ function createFeishuSdkClient({ appId, appSecret, Lark }) {
       return { msgType, parsed };
     },
 
-    async downloadMessageResource(messageId, fileKey, type = 'image') {
+    async downloadMessageResource(messageId, fileKey, type = 'image', destPath) {
       const resp = await client.im.messageResource.get({
         path: { message_id: messageId, file_key: fileKey },
         params: { type },
       });
-      // The SDK may return a stream or a Buffer-like object; normalise to Buffer
+      // Lark SDK v1.x returns an object with writeFile / getReadableStream
+      if (destPath && typeof resp.writeFile === 'function') {
+        await resp.writeFile(destPath);
+        return;
+      }
+      if (typeof resp.getReadableStream === 'function') {
+        const stream = resp.getReadableStream();
+        return new Promise((resolve, reject) => {
+          const chunks = [];
+          stream.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+          stream.on('end', () => resolve(Buffer.concat(chunks)));
+          stream.on('error', reject);
+        });
+      }
       if (Buffer.isBuffer(resp)) {
         return resp;
       }

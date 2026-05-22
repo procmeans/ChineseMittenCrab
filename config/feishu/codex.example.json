@@ -1,0 +1,14 @@
+{
+  "engine": "codex",
+  "codex": {
+    "bin": "codex",
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "cwd": "/Users/you/Documents",
+    "add_dirs": [],
+    "sandbox": "danger-full-access",
+    "approval_policy": "never",
+    "api_key": "",
+    "timeout_sec": 0
+  }
+}

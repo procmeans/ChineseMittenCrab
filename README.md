@@ -1,6 +1,6 @@
 # ChineseMittenCrab
 
-一个运行在 macOS 本地的飞书群聊 AI 机器人，使用 Claude Code CLI 作为推理引擎，通过飞书 WebSocket 长连接实时收发消息。
+一个运行在 macOS 本地的飞书群聊 AI 机器人，推理引擎可按账号在 Claude Code CLI（默认）和 Codex CLI 之间切换，通过飞书 WebSocket 长连接实时收发消息。
 
 ## 功能
 
@@ -80,9 +80,11 @@ npm run feishu:bot
 | 文件 | 说明 |
 |---|---|
 | `config/secrets/local.yaml` | 飞书 app_id / app_secret（不提交 git）|
-| `config/feishu/default.json` | 账号配置，支持指定 Claude 模型 |
-| `~/.chinese-mitten-crab/claude/default/.claude/CLAUDE.md` | 机器人系统提示词，控制角色和行为 |
+| `config/feishu/default.json` | 账号配置，支持选择 `engine`（`claude` 或 `codex`，默认 `claude`）和指定模型 |
+| `~/.chinese-mitten-crab/claude/default/.claude/CLAUDE.md` | Claude 引擎系统提示词，控制角色和行为 |
 | `~/.chinese-mitten-crab/claude/default/.claude/settings.json` | Claude 权限配置 |
+| `~/.chinese-mitten-crab/codex/default/.codex/CODEX.md` | Codex 引擎系统提示词（可选，仅当 engine=codex） |
+| `~/.chinese-mitten-crab/codex/default/{auth.json,config.toml}` | Codex 凭据，启动时自动从 `~/.codex/` 同步 |
 
 ### 系统提示词示例
 
@@ -129,7 +131,27 @@ node tools/feishu_ws_bot.js --account default
 node tools/feishu_ws_bot.js --account myaccount
 ```
 
-每个账号有独立的 Claude 配置目录：`~/.chinese-mitten-crab/claude/[account]/`
+每个账号有独立的引擎配置目录：`~/.chinese-mitten-crab/claude/[account]/` 或 `~/.chinese-mitten-crab/codex/[account]/`。
+
+## 切换到 Codex 引擎
+
+在账号配置里把 `engine` 设为 `codex` 并提供 `codex` 块（参考 `config/feishu/codex.example.json`）：
+
+```json
+{
+  "engine": "codex",
+  "codex": {
+    "bin": "codex",
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "cwd": "/Users/you/Documents",
+    "sandbox": "danger-full-access",
+    "approval_policy": "never"
+  }
+}
+```
+
+启动时会自动把 `~/.codex/` 里的 `auth.json` / `config.toml` 同步到 `~/.chinese-mitten-crab/codex/[account]/`，因此第一次只需在终端跑一次 `codex` 完成登录即可。
 
 ## macOS 后台运行（LaunchAgent）
 

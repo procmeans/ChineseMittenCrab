@@ -4,13 +4,16 @@ async function handleIncomingMessage(deps, rawEvent) {
     renderBotReply,
     statusStore,
     replyGateway,
-    runClaudeExec,
     refreshFollowUpWindow,
     ensureChatState,
     followUpStates,
-    claudeExecInput,
     persistState,
   } = deps;
+
+  // Engine-neutral aliases — accept new (runExec/execInput) or legacy (runClaudeExec/claudeExecInput) names
+  const runExec = deps.runExec || deps.runClaudeExec;
+  const execInput = deps.execInput || deps.claudeExecInput || {};
+  const execDeps = deps.execDeps || deps.claudeExecDeps || {};
 
   const { isFollowUpWindowOpen } = require('./follow_up_window');
   const { appendHistory, clearHistory, getHistory } = require('./thread_state');
@@ -56,7 +59,7 @@ async function handleIncomingMessage(deps, rawEvent) {
     const outputDir = path.join('/tmp', 'cmr-out', event.messageId);
     try { fs.mkdirSync(outputDir, { recursive: true }); } catch (_) {}
 
-    // Streaming progress: update the card every 4s as Claude produces output
+    // Streaming progress: update the card every 4s as the engine produces output
     let accumulated = '';
     let lastCardUpdate = 0;
     const onChunk = (chunk) => {
@@ -68,9 +71,9 @@ async function handleIncomingMessage(deps, rawEvent) {
       }
     };
 
-    const result = await runClaudeExec(
-      deps.claudeExecDeps || {},
-      { ...claudeExecInput, prompt, outputDir, onChunk }
+    const result = await runExec(
+      execDeps,
+      { ...execInput, prompt, outputDir, onChunk }
     );
 
     // Collect files Claude wrote to the output directory

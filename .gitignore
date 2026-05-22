@@ -1,3 +1,15 @@
 node_modules/
 .DS_Store
 config/secrets/local.yaml
+
+# Local-only account configs — only example templates are tracked
+config/feishu/*.json
+!config/feishu/*.example.json
+config/wechat/*.json
+!config/wechat/*.example.json
+
+# Runtime logs
+logs/
+
+# Local overrides of CLAUDE.md and similar
+*.local

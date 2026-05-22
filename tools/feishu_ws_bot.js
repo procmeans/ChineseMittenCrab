@@ -11,11 +11,24 @@ const { createTaskQueue } = require('./lib/runtime/task_queue');
 const { createDelayedWaitNotice } = require('./lib/runtime/lightweight_wait_hint');
 const { refreshFollowUpWindow } = require('./lib/runtime/follow_up_window');
 const { ensureChatState, saveStates, loadStates } = require('./lib/runtime/thread_state');
-const { runClaudeExec } = require('./lib/claude/exec_service');
+const { resolveEngine } = require('./lib/runtime/engine_selector');
 const { loadLocalSecrets } = require('./lib/config/local_secret_store');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { handleIncomingMessage } = require('./lib/runtime/message_handler');
-const os = require('node:os');
+
+// Per-account Feishu credentials lookup. Supports two layouts:
+//   feishu: { app_id, app_secret }                            ← single-account (default)
+//   feishu: { app_id, app_secret, <account>: { app_id, ... } } ← multi-account, nested per account
+// For account="default" the top-level fields are used. For other accounts, the nested block wins
+// when it carries an app_id, otherwise falls through to the top-level credentials.
+function resolveFeishuSecrets(secrets, accountName) {
+  const root = (secrets && secrets.feishu) || secrets || {};
+  const nested = root && typeof root === 'object' ? root[accountName] : null;
+  if (nested && typeof nested === 'object' && nested.app_id) {
+    return nested;
+  }
+  return root;
+}
 
 function readArg(name, fallbackValue) {
   const index = process.argv.indexOf(name);
@@ -93,10 +106,10 @@ function main() {
   if (process.argv.includes('--dry-run')) {
     const checks = [];
 
-    // 1. Secrets check
+    // 1. Secrets check (per-account first, fallback to top-level for backward compat)
     try {
       const secrets = loadLocalSecrets();
-      const feishuSecrets = secrets.feishu || secrets;
+      const feishuSecrets = resolveFeishuSecrets(secrets, accountName);
       checks.push(feishuSecrets.app_id && feishuSecrets.app_secret
         ? 'feishu=ready' : 'feishu=NO_CREDENTIALS');
     } catch (e) {
@@ -107,16 +120,28 @@ function main() {
     const fs = require('node:fs');
     const path = require('node:path');
     const configPath = path.join('config', 'feishu', `${accountName}.json`);
-    checks.push(fs.existsSync(configPath)
-      ? 'config=ready' : 'config=MISSING');
+    const configReady = fs.existsSync(configPath);
+    checks.push(configReady ? 'config=ready' : 'config=MISSING');
 
-    // 3. Claude binary check
+    // 3. Engine binary check — picked from the account config (defaults to claude)
+    let engineName = 'claude';
+    let engineBin = 'claude';
+    try {
+      const accountConfig = configReady
+        ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
+        : {};
+      const engine = resolveEngine(accountConfig);
+      engineName = engine.name;
+      engineBin = engine.bin;
+    } catch (e) {
+      checks.push(`engine=ERROR:${e.message}`);
+    }
     try {
       const { execFileSync } = require('node:child_process');
-      execFileSync('claude', ['--version'], { timeout: 5000 });
-      checks.push('claude=ready');
+      execFileSync(engineBin, ['--version'], { timeout: 5000 });
+      checks.push(`${engineName}=ready`);
     } catch (e) {
-      checks.push('claude=NOT_FOUND');
+      checks.push(`${engineName}=NOT_FOUND`);
     }
 
     const allReady = checks.every(c => c.endsWith('=ready'));
@@ -125,9 +150,9 @@ function main() {
     return;
   }
 
-  // Load secrets
+  // Load secrets (per-account first, fallback to top-level for backward compat)
   const secrets = loadLocalSecrets();
-  const feishuSecrets = secrets.feishu || secrets;
+  const feishuSecrets = resolveFeishuSecrets(secrets, accountName);
   const appId = feishuSecrets.app_id;
   const appSecret = feishuSecrets.app_secret;
 
@@ -152,6 +177,10 @@ function main() {
     account: accountConfig,
   });
 
+  // Engine selection — pick claude or codex based on account config
+  const engine = resolveEngine(config);
+  console.log(`ENGINE_SELECTED account=${accountName} engine=${engine.name}`);
+
   // Create SDK client
   const sdkClient = createFeishuSdkClient({ appId, appSecret });
 
@@ -171,15 +200,11 @@ function main() {
     replyGateway,
     taskQueue,
     followUpStates,
-    runClaudeExec,
+    runExec: engine.runExec,
     createDelayedWaitNotice,
     refreshFollowUpWindow,
     ensureChatState,
-    claudeExecInput: {
-      model: config.model,
-      account: accountName,
-      cwd: os.homedir(),
-    },
+    execInput: engine.buildInput({ config, accountName }),
     persistState: () => saveStates(followUpStates, accountName),
   });
 
@@ -236,14 +261,14 @@ async function prepareRuntimeEvent(event, deps = {}) {
 
       if (msgType === 'file' && parsed.file_key) {
         // Quoted message is a file — download it and attach
-        const path = require('node:path');
         const fileName = parsed.file_name || ('quoted_file_' + parsed.file_key);
-        const ext = path.extname(fileName) || '';
         const tempPath = require('node:path').join('/tmp', fileName);
         try {
-          const buf = await fileClient.downloadMessageResource(normalized.parentId, parsed.file_key, 'file');
-          require('node:fs').writeFileSync(tempPath, buf);
-          files.push(tempPath);
+          const result = await fileClient.downloadMessageResource(normalized.parentId, parsed.file_key, 'file', tempPath);
+          if (result && Buffer.isBuffer(result)) {
+            require('node:fs').writeFileSync(tempPath, result);
+          }
+          files.push({ filePath: tempPath, fileName });
           quotedText = '[引用文件: ' + fileName + ']';
           console.log('QUOTED_FILE downloaded=' + tempPath);
         } catch (dlErr) {
@@ -255,9 +280,11 @@ async function prepareRuntimeEvent(event, deps = {}) {
         const imageName = 'quoted_image_' + parsed.image_key + '.jpg';
         const tempPath = '/tmp/' + imageName;
         try {
-          const buf = await fileClient.downloadMessageResource(normalized.parentId, parsed.image_key, 'image');
-          require('node:fs').writeFileSync(tempPath, buf);
-          files.push(tempPath);
+          const result = await fileClient.downloadMessageResource(normalized.parentId, parsed.image_key, 'image', tempPath);
+          if (result && Buffer.isBuffer(result)) {
+            require('node:fs').writeFileSync(tempPath, result);
+          }
+          files.push({ filePath: tempPath, fileName: imageName });
           quotedText = '[引用图片: ' + imageName + ']';
           console.log('QUOTED_IMAGE downloaded=' + tempPath);
         } catch (dlErr) {

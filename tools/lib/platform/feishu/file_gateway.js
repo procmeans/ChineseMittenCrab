@@ -15,9 +15,12 @@ async function downloadFileToTempFile(client, messageId, fileKey, options = {}) 
   const ext = path.extname(fileName).toLowerCase();
   const type = IMAGE_EXTS.has(ext) ? 'image' : 'file';
 
-  const content = await downloader(messageId, fileKey, type);
+  const result = await downloader(messageId, fileKey, type, filePath);
 
-  fs.writeFileSync(filePath, content);
+  // If downloader didn't write to destPath directly, write the returned buffer
+  if (result && Buffer.isBuffer(result)) {
+    fs.writeFileSync(filePath, result);
+  }
 
   return {
     filePath,

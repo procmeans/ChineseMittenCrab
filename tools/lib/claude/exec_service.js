@@ -81,7 +81,7 @@ async function runClaudeExec(deps = {}, input = {}) {
       CLAUDE_HOME: claudeHome,
     },
     onChunk: input.onChunk,
-    timeoutMs: input.timeoutMs || 600_000,
+    timeoutMs: input.timeoutMs,
   });
 
   return {
