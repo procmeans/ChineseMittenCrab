@@ -207,6 +207,17 @@ function createWechatApiClient({
       return entry ? entry.nickname : '';
     },
 
+    /**
+     * Synchronous cache-only nickname lookup — no HTTP. Returns '' if not yet cached.
+     * Used on the hot path (per-message log lines) so dispatch doesn't await a network call
+     * before sending the thinking placeholder. Pair with a fire-and-forget getCustomers()
+     * earlier in the batch so misses self-heal for subsequent messages.
+     */
+    getCachedNickname(externalUserid) {
+      const entry = getCachedCustomer(externalUserid);
+      return entry ? entry.nickname : '';
+    },
+
     /** Re-export normalize so the bot doesn't have to dig into kf_client itself. */
     normalizeKfMessage,
   };

@@ -38,14 +38,16 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
   const FRESH_WINDOW_MS = 60_000;
   const now = Date.now();
 
-  // Batch-resolve nicknames upfront — getCustomers dedupes + caches so calling per-message
-  // below is essentially free (and even the first call only costs one HTTP roundtrip).
+  // Fire-and-forget nickname prefetch so subsequent log lines + KF_SEND get nicknames from
+  // cache without anyone awaiting an HTTP call on the hot path. First message in a batch
+  // with a brand-new user may log nickname="" until this lands (~200-300ms later); every
+  // subsequent message — including the bot's reply log — gets the cached value.
   if (apiClient && typeof apiClient.getCustomers === 'function') {
     const userids = list
       .filter((m) => Number(m.origin) === 3 && m.external_userid)
       .map((m) => m.external_userid);
     if (userids.length > 0) {
-      try { await apiClient.getCustomers(userids); } catch (_) { /* best-effort */ }
+      apiClient.getCustomers(userids).catch(() => { /* best-effort, don't crash dispatch */ });
     }
   }
 
@@ -58,11 +60,10 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
     const norm = normalizeKfMessage(msg);
     if (!norm || !norm.senderId) continue;
 
-    // Look up nickname from cache (populated by the batch call above)
-    let nickname = '';
-    if (apiClient && typeof apiClient.getNickname === 'function') {
-      try { nickname = await apiClient.getNickname(norm.senderId); } catch (_) { /* ignore */ }
-    }
+    // Synchronous cache lookup only — no HTTP on the dispatch hot path
+    const nickname = (apiClient && typeof apiClient.getCachedNickname === 'function')
+      ? apiClient.getCachedNickname(norm.senderId)
+      : '';
     const nicknamePart = nickname ? ' nickname=' + JSON.stringify(nickname) : '';
 
     // Conversation log line — user-side. Quote-wrap text and truncate to 500 chars so a long

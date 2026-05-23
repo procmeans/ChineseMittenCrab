@@ -166,6 +166,24 @@ describe('wechat/api_client', () => {
       const nick = await client.getNickname('wm_unknown');
       assert.strictEqual(nick, '');
     });
+
+    it('getCachedNickname returns "" without making an HTTP call when not cached', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      const nick = client.getCachedNickname('wm_never_seen');
+      assert.strictEqual(nick, '');
+      assert.strictEqual(kfClient.calls.length, 0, 'no HTTP call should have happened');
+    });
+
+    it('getCachedNickname returns the cached value after getCustomers has populated it', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      await client.getCustomers(['wm_a']);  // warm cache
+      const nick = client.getCachedNickname('wm_a');
+      assert.strictEqual(nick, 'Nick_wm_a');
+    });
   });
 
   it('syncQueue forwards token + cursor + openKfId to kfClient.syncMsg', async () => {
