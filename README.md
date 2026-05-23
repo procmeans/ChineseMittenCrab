@@ -242,6 +242,18 @@ callback_server 同时 serve `WW_verify_xxx.txt` 文件,企业微信可信域名
 | 48007 | 该客服没授权给本应用 | 在「企业内部开发」对话框把客服授权给本自建应用 |
 | 60020 | IP 不在白名单 | 自建应用 → 企业可信IP 加上当前出口 IP |
 
+### 微信侧运行时特性
+
+- **「⏳ 处理中」占位**:每条用户消息进入流水线后,bot 立刻先发一条 `⏳ 收到,正在思考...` 让对方知道在干活,真实回复随后单独送达(微信客服不支持卡片 in-place patch,只能用两条消息模拟)。只对 60 秒内的新消息发占位,bot 启动时拉的旧 sync 队列不刷屏。
+- **失败自动报错**:claude / codex 抛错时,message_handler 的 catch 分支自动 sendText `⚠️ <错误信息>`,用户能看到出了什么,而不是无声卡死。
+- **文件 / 图片真实推送**:claude 写到 `/tmp/cmr-out/{messageId}/` 的文件,会经 `/cgi-bin/media/upload` 上传再 `kf/send_msg` 推给用户。图片(`.png/.jpg/.gif/.webp/.bmp`)走 `msgtype=image`,其余走 `file`。20MB 以内即可。
+- **95012 自愈**:`api_client` 把 42001(token 过期)和 95012(wecom 接管状态短暂飘移)都纳入 `withTokenRetry`,自动刷 access_token 重试一次。下午长时间 95012 期间消息会丢,但状态恢复后第一条新消息就会自动跑通,不用手动重启。
+- **昵称解析**:`api_client.getCustomers` 调 `/cgi-bin/kf/customer/batchget` 把 `wm_xxx` 翻成中文昵称,缓存 24 小时。日志里 user / bot 两侧都带 `nickname="..."` 字段,grep 一个人的对话:
+  ```bash
+  grep 'nickname="小草爷爷"' ~/Library/Logs/cmr/cmr.wechat-default.log | grep -E 'KF_USER_MSG|KF_SEND'
+  ```
+- **⚠️ 易忽视的开关**:企业微信「微信客服」**应用详情页右上角的蓝色开关**(`https://work.weixin.qq.com/wework_admin/frame#/apps`)关掉 = 整个微信客服 wecom 模式停 = 所有 wecom API 立刻 95012。误碰过一次,排查 1 小时才发现。**不要点应用页右上角任何疑似开关的东西**。
+
 ## macOS 后台运行(LaunchAgent)
 
 `tools/launchd_ctl.sh` 一键管理 4 个服务:`feishu-default` / `feishu-xiaocao` / `wechat-default` / `cloudflared`。每个服务 `RunAtLoad: true` + `KeepAlive` 异常重启,所以 mac 重启自启、bot crash 自愈。
