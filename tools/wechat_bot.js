@@ -31,6 +31,13 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
   }
   const list = (resp && resp.msg_list) || [];
   console.log('KF_SYNC_OK count=' + list.length + ' has_more=' + (resp && resp.has_more));
+
+  // Skip a stale-batch placeholder spam: when a fresh bot startup drains an old sync queue,
+  // we don't want to spray "⏳ 处理中" for messages that are minutes/hours/days old.
+  // Only emit placeholders for messages whose send_time is within the last 60 seconds.
+  const FRESH_WINDOW_MS = 60_000;
+  const now = Date.now();
+
   for (const msg of list) {
     // origin 3 = user; 4 = bot push echo; 5 = human agent. Reply path must not re-process our own.
     if (Number(msg.origin) !== 3) {
@@ -39,6 +46,19 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
     }
     const norm = normalizeKfMessage(msg);
     if (!norm || !norm.senderId) continue;
+
+    // Send a "thinking" placeholder right away so the user sees activity while claude / codex
+    // runs (long tasks can take minutes). Fire-and-forget so we don't delay the actual dispatch;
+    // the placeholder is best-effort and a failure here doesn't block reply delivery.
+    const isFresh = (now - norm.createTime) < FRESH_WINDOW_MS;
+    if (isFresh && apiClient && typeof apiClient.sendText === 'function') {
+      apiClient.sendText({
+        touser: norm.senderId,
+        openKfId: norm.openKfId,
+        text: '⏳ 收到,正在思考...',
+      }).catch((err) => console.error('KF_THINKING_FAIL ' + (err && err.message)));
+    }
+
     // Repack as a callback-shaped raw event so the runtime's standard onMessage path picks it up
     // (dedup, stale check, prepareRuntimeEvent, task_queue, message_handler, reply_gateway).
     const fakeRaw = {
