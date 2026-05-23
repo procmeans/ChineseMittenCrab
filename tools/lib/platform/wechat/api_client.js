@@ -16,8 +16,11 @@ function createWechatApiClient({ accessTokenCache, kfClient = { sendTextMsg, syn
   async function withTokenRetry(fn) {
     const token = await accessTokenCache.get();
     const resp = await fn(token);
-    if (resp && resp.errcode === 42001) {
-      // Token expired on the server side while still in our cache — flush and retry once.
+    // 42001 = access_token expired (standard refresh case)
+    // 95012 = "not use in wecom" — the token was issued before the wecom-takeover authorization
+    //   propagated, so it carries stale privileges. Empirically, flushing + retrying with a
+    //   fresh token recovers once the backend catches up.
+    if (resp && (resp.errcode === 42001 || resp.errcode === 95012)) {
       accessTokenCache.invalidate();
       const fresh = await accessTokenCache.get();
       return fn(fresh);
