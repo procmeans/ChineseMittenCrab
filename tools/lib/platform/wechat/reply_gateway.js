@@ -46,8 +46,19 @@ function createWechatReplyGateway(apiClient, openidMap) {
     },
 
     async sendFileReply(messageId, filePath) {
-      // WeChat Dialog Open Platform may not support file push.
-      // Send a text note instead.
+      const routing = lookupRouting(messageId);
+      if (!routing || !routing.openid || !apiClient) return { replyMessageId: null };
+      if (!routing.openKfId) return { replyMessageId: null };
+
+      // Prefer real file/image push; fall back to a text note if the client doesn't expose
+      // sendFile (e.g., during transitional code paths).
+      if (typeof apiClient.sendFile === 'function') {
+        return apiClient.sendFile({
+          touser: routing.openid,
+          openKfId: routing.openKfId,
+          filePath,
+        });
+      }
       const path = require('node:path');
       const fileName = path.basename(filePath);
       return this.sendTextReply(messageId, `[文件: ${fileName}]`);

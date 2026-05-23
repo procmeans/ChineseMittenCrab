@@ -73,6 +73,41 @@ describe('wechat/kf_client', () => {
     });
   });
 
+  describe('sendMediaMsg', () => {
+    const { sendMediaMsg } = require('../tools/lib/platform/wechat/kf_client');
+
+    it('throws when required fields are missing', async () => {
+      await assert.rejects(() => sendMediaMsg({ touser: 'u', openKfId: 'k', msgtype: 'file', mediaId: 'M' }), /accessToken required/);
+      await assert.rejects(() => sendMediaMsg({ accessToken: 'AT', openKfId: 'k', msgtype: 'file', mediaId: 'M' }), /touser required/);
+      await assert.rejects(() => sendMediaMsg({ accessToken: 'AT', touser: 'u', msgtype: 'file', mediaId: 'M' }), /openKfId required/);
+      await assert.rejects(() => sendMediaMsg({ accessToken: 'AT', touser: 'u', openKfId: 'k', mediaId: 'M' }), /unsupported msgtype/);
+      await assert.rejects(() => sendMediaMsg({ accessToken: 'AT', touser: 'u', openKfId: 'k', msgtype: 'file' }), /mediaId required/);
+    });
+
+    it('rejects unsupported msgtypes', async () => {
+      await assert.rejects(
+        () => sendMediaMsg({ accessToken: 'AT', touser: 'u', openKfId: 'k', msgtype: 'text', mediaId: 'M' }),
+        /unsupported msgtype text/
+      );
+    });
+
+    it('builds the right body shape for each media type (file/image/voice/video)', async () => {
+      for (const msgtype of ['file', 'image', 'voice', 'video']) {
+        let captured;
+        await sendMediaMsg({
+          accessToken: 'AT', touser: 'u', openKfId: 'k', msgtype, mediaId: 'MID',
+          postFn: (path, body) => { captured = { path, body }; return Promise.resolve({ errcode: 0, msgid: 'm1' }); },
+        });
+        assert.match(captured.path, /\/cgi-bin\/kf\/send_msg\?access_token=AT/);
+        assert.strictEqual(captured.body.touser, 'u');
+        assert.strictEqual(captured.body.open_kfid, 'k');
+        assert.strictEqual(captured.body.msgtype, msgtype);
+        // The wrapper field is named the same as the msgtype
+        assert.deepStrictEqual(captured.body[msgtype], { media_id: 'MID' });
+      }
+    });
+  });
+
   describe('normalizeKfMessage', () => {
     it('maps a text message to runtime event shape with channel=9 and openKfId set', () => {
       const msg = {

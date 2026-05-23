@@ -104,6 +104,33 @@ async function sendTextMsg({ accessToken, touser, openKfId, text, postFn }) {
 }
 
 /**
+ * Push a media reply (file / image / voice / video) from a kf account to a user.
+ * media_id comes from uploadMedia() — it identifies a file previously uploaded to wechat's
+ * media storage, valid for 3 days.
+ *
+ * msgtype is one of: file | image | voice | video. The body field that wraps media_id
+ * uses the same word as msgtype (so msgtype=file → body.file = { media_id }, etc.).
+ */
+async function sendMediaMsg({ accessToken, touser, openKfId, msgtype, mediaId, postFn }) {
+  if (!accessToken) throw new Error('sendMediaMsg: accessToken required');
+  if (!touser) throw new Error('sendMediaMsg: touser required');
+  if (!openKfId) throw new Error('sendMediaMsg: openKfId required');
+  if (!mediaId) throw new Error('sendMediaMsg: mediaId required');
+  if (!['file', 'image', 'voice', 'video'].includes(msgtype)) {
+    throw new Error('sendMediaMsg: unsupported msgtype ' + msgtype);
+  }
+  const post = postFn || defaultPost;
+  const body = {
+    touser,
+    open_kfid: openKfId,
+    msgtype,
+    [msgtype]: { media_id: mediaId },
+  };
+  const path = `/cgi-bin/kf/send_msg?access_token=${encodeURIComponent(accessToken)}`;
+  return post(path, body);
+}
+
+/**
  * Normalize a single kf sync_msg entry into the runtime event shape used by message_handler.
  *
  * Only `origin === 3` (user) entries are real customer messages; origin 4 is our own bot push
@@ -166,6 +193,7 @@ function normalizeKfMessage(msg) {
 module.exports = {
   syncMsg,
   sendTextMsg,
+  sendMediaMsg,
   getServiceState,
   transServiceState,
   normalizeKfMessage,
