@@ -38,6 +38,17 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
   const FRESH_WINDOW_MS = 60_000;
   const now = Date.now();
 
+  // Batch-resolve nicknames upfront — getCustomers dedupes + caches so calling per-message
+  // below is essentially free (and even the first call only costs one HTTP roundtrip).
+  if (apiClient && typeof apiClient.getCustomers === 'function') {
+    const userids = list
+      .filter((m) => Number(m.origin) === 3 && m.external_userid)
+      .map((m) => m.external_userid);
+    if (userids.length > 0) {
+      try { await apiClient.getCustomers(userids); } catch (_) { /* best-effort */ }
+    }
+  }
+
   for (const msg of list) {
     // origin 3 = user; 4 = bot push echo; 5 = human agent. Reply path must not re-process our own.
     if (Number(msg.origin) !== 3) {
@@ -47,10 +58,18 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
     const norm = normalizeKfMessage(msg);
     if (!norm || !norm.senderId) continue;
 
+    // Look up nickname from cache (populated by the batch call above)
+    let nickname = '';
+    if (apiClient && typeof apiClient.getNickname === 'function') {
+      try { nickname = await apiClient.getNickname(norm.senderId); } catch (_) { /* ignore */ }
+    }
+    const nicknamePart = nickname ? ' nickname=' + JSON.stringify(nickname) : '';
+
     // Conversation log line — user-side. Quote-wrap text and truncate to 500 chars so a long
     // message doesn't push log entries off-screen. Pairs with the KF_SEND line that records
     // bot's outbound text (see api_client wrapSendResult).
-    console.log('KF_USER_MSG userid=' + norm.senderId + ' openKfId=' + norm.openKfId
+    console.log('KF_USER_MSG userid=' + norm.senderId + nicknamePart
+      + ' openKfId=' + norm.openKfId
       + ' msgid=' + norm.messageId + ' msgtype=' + norm.msgtype
       + ' text=' + JSON.stringify(String(norm.text || '').slice(0, 500)));
 

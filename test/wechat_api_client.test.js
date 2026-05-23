@@ -66,6 +66,108 @@ describe('wechat/api_client', () => {
     assert.strictEqual(r.resp.errcode, 48002);
   });
 
+  describe('getCustomers (nickname resolution + cache)', () => {
+    function makeKfStub() {
+      const calls = [];
+      return {
+        calls,
+        sendTextMsg: async () => ({ errcode: 0 }),
+        sendMediaMsg: async () => ({ errcode: 0 }),
+        syncMsg: async () => ({ errcode: 0 }),
+        transServiceState: async () => ({ errcode: 0 }),
+        batchGetCustomers: async ({ externalUseridList }) => {
+          calls.push(externalUseridList);
+          return {
+            errcode: 0,
+            customer_list: externalUseridList.map((id) => ({
+              external_userid: id,
+              nickname: 'Nick_' + id,
+              avatar: 'http://x/' + id,
+              gender: 1,
+            })),
+          };
+        },
+      };
+    }
+
+    it('batch-fetches nicknames and returns a Map keyed by external_userid', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      const result = await client.getCustomers(['wm_a', 'wm_b']);
+      assert.strictEqual(result.get('wm_a').nickname, 'Nick_wm_a');
+      assert.strictEqual(result.get('wm_b').nickname, 'Nick_wm_b');
+      assert.strictEqual(kfClient.calls.length, 1);
+      assert.deepStrictEqual(kfClient.calls[0], ['wm_a', 'wm_b']);
+    });
+
+    it('returns cached entries without re-fetching when fresh', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      await client.getCustomers(['wm_a']);
+      await client.getCustomers(['wm_a']);  // should hit cache
+      await client.getCustomers(['wm_a']);
+      assert.strictEqual(kfClient.calls.length, 1);
+    });
+
+    it('mixes cache hits + cache misses in one call', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      await client.getCustomers(['wm_a']);
+      const r = await client.getCustomers(['wm_a', 'wm_b', 'wm_c']);
+      assert.strictEqual(r.get('wm_a').nickname, 'Nick_wm_a');
+      assert.strictEqual(r.get('wm_b').nickname, 'Nick_wm_b');
+      assert.strictEqual(r.get('wm_c').nickname, 'Nick_wm_c');
+      // First call fetched [wm_a]; second only the misses [wm_b, wm_c]
+      assert.strictEqual(kfClient.calls.length, 2);
+      assert.deepStrictEqual(kfClient.calls[1], ['wm_b', 'wm_c']);
+    });
+
+    it('chunks calls to max 100 ids each', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      const ids = [];
+      for (let i = 0; i < 250; i++) ids.push('wm_' + i);
+      await client.getCustomers(ids);
+      assert.strictEqual(kfClient.calls.length, 3);
+      assert.strictEqual(kfClient.calls[0].length, 100);
+      assert.strictEqual(kfClient.calls[1].length, 100);
+      assert.strictEqual(kfClient.calls[2].length, 50);
+    });
+
+    it('respects TTL — re-fetches after cache expiry', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = makeKfStub();
+      let nowMs = 1000;
+      const client = createWechatApiClient({
+        accessTokenCache: cache, kfClient,
+        customerTtlMs: 60_000,
+        now: () => nowMs,
+      });
+      await client.getCustomers(['wm_a']);
+      nowMs += 30_000; // still fresh
+      await client.getCustomers(['wm_a']);
+      assert.strictEqual(kfClient.calls.length, 1);
+      nowMs += 60_000; // now expired
+      await client.getCustomers(['wm_a']);
+      assert.strictEqual(kfClient.calls.length, 2);
+    });
+
+    it('getNickname returns empty string for unresolvable IDs', async () => {
+      const cache = fakeTokenCache('AT');
+      const kfClient = {
+        ...makeKfStub(),
+        batchGetCustomers: async () => ({ errcode: 0, customer_list: [] }),  // nothing returned
+      };
+      const client = createWechatApiClient({ accessTokenCache: cache, kfClient });
+      const nick = await client.getNickname('wm_unknown');
+      assert.strictEqual(nick, '');
+    });
+  });
+
   it('syncQueue forwards token + cursor + openKfId to kfClient.syncMsg', async () => {
     let captured;
     const cache = fakeTokenCache('AT');

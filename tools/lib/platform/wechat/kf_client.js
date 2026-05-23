@@ -48,6 +48,31 @@ async function syncMsg({ accessToken, token, openKfId, cursor = '', limit = 1000
 }
 
 /**
+ * Look up customer profiles (nickname / avatar / gender / unionid) for one or more
+ * external_userid values. Max 100 per call.
+ *
+ * Endpoint: POST /cgi-bin/kf/customer/batchget?access_token=AT
+ * Returns: { customer_list: [{ external_userid, nickname, avatar, gender, unionid }] }
+ *
+ * Used to turn opaque wm_xxx IDs into human-readable names in conversation logs.
+ */
+async function batchGetCustomers({ accessToken, externalUseridList, needEnterSessionContext = 0, postFn }) {
+  if (!accessToken) throw new Error('batchGetCustomers: accessToken required');
+  if (!Array.isArray(externalUseridList) || externalUseridList.length === 0) {
+    throw new Error('batchGetCustomers: externalUseridList must be a non-empty array');
+  }
+  if (externalUseridList.length > 100) {
+    throw new Error('batchGetCustomers: max 100 ids per call');
+  }
+  const post = postFn || defaultPost;
+  const path = `/cgi-bin/kf/customer/batchget?access_token=${encodeURIComponent(accessToken)}`;
+  return post(path, {
+    external_userid_list: externalUseridList,
+    need_enter_session_context: needEnterSessionContext,
+  });
+}
+
+/**
  * Get the current service_state for a (kf, user) conversation.
  * Used to decide whether we need to call trans before sending.
  *
@@ -194,6 +219,7 @@ module.exports = {
   syncMsg,
   sendTextMsg,
   sendMediaMsg,
+  batchGetCustomers,
   getServiceState,
   transServiceState,
   normalizeKfMessage,

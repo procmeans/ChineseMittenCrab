@@ -73,6 +73,34 @@ describe('wechat/kf_client', () => {
     });
   });
 
+  describe('batchGetCustomers', () => {
+    const { batchGetCustomers } = require('../tools/lib/platform/wechat/kf_client');
+
+    it('throws when required args missing or invalid', async () => {
+      await assert.rejects(() => batchGetCustomers({ externalUseridList: ['u'] }), /accessToken required/);
+      await assert.rejects(() => batchGetCustomers({ accessToken: 'AT' }), /must be a non-empty array/);
+      await assert.rejects(() => batchGetCustomers({ accessToken: 'AT', externalUseridList: [] }), /must be a non-empty array/);
+      await assert.rejects(
+        () => batchGetCustomers({ accessToken: 'AT', externalUseridList: Array(101).fill('u') }),
+        /max 100 ids per call/
+      );
+    });
+
+    it('POSTs the right body shape to /cgi-bin/kf/customer/batchget', async () => {
+      let captured;
+      await batchGetCustomers({
+        accessToken: 'AT',
+        externalUseridList: ['wm_a', 'wm_b'],
+        postFn: (path, body) => { captured = { path, body }; return Promise.resolve({ errcode: 0, customer_list: [] }); },
+      });
+      assert.match(captured.path, /\/cgi-bin\/kf\/customer\/batchget\?access_token=AT/);
+      assert.deepStrictEqual(captured.body, {
+        external_userid_list: ['wm_a', 'wm_b'],
+        need_enter_session_context: 0,
+      });
+    });
+  });
+
   describe('sendMediaMsg', () => {
     const { sendMediaMsg } = require('../tools/lib/platform/wechat/kf_client');
 

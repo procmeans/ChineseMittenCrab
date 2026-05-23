@@ -1,4 +1,4 @@
-const { sendTextMsg, sendMediaMsg, syncMsg, transServiceState, normalizeKfMessage } = require('./kf_client');
+const { sendTextMsg, sendMediaMsg, syncMsg, transServiceState, batchGetCustomers, normalizeKfMessage } = require('./kf_client');
 const { uploadMedia, guessMediaType } = require('./media');
 
 /**
@@ -15,10 +15,23 @@ const { uploadMedia, guessMediaType } = require('./media');
  */
 function createWechatApiClient({
   accessTokenCache,
-  kfClient = { sendTextMsg, sendMediaMsg, syncMsg, transServiceState },
+  kfClient = { sendTextMsg, sendMediaMsg, syncMsg, transServiceState, batchGetCustomers },
   mediaClient = { uploadMedia, guessMediaType },
+  customerTtlMs = 24 * 60 * 60 * 1000,
+  now = Date.now,
 }) {
   if (!accessTokenCache) throw new Error('createWechatApiClient: accessTokenCache required');
+
+  // In-memory cache of external_userid → { nickname, avatar, fetchedAt }.
+  // 24h TTL is generous — nicknames change rarely; expire just to handle the cold-start case
+  // after a long downtime. Process-local; restart flushes it (acceptable for our scale).
+  const customerCache = new Map();
+  function getCachedCustomer(externalUserid) {
+    const entry = customerCache.get(externalUserid);
+    if (!entry) return null;
+    if ((now() - entry.fetchedAt) > customerTtlMs) return null;
+    return entry;
+  }
 
   async function withTokenRetry(fn) {
     const token = await accessTokenCache.get();
@@ -66,8 +79,11 @@ function createWechatApiClient({
   function wrapSendResult(resp, msgtype, touser, openKfId, contentPreview) {
     const ok = resp && (resp.errcode === 0 || resp.errcode === undefined);
     const previewPart = contentPreview ? ' text=' + JSON.stringify(String(contentPreview).slice(0, 500)) : '';
-    console.log('KF_SEND msgtype=' + msgtype + ' touser=' + touser + ' openKfId=' + openKfId
-      + ' ok=' + ok + previewPart + ' resp=' + JSON.stringify(resp).slice(0, 200));
+    const cached = getCachedCustomer(touser);
+    const nicknamePart = cached && cached.nickname ? ' nickname=' + JSON.stringify(cached.nickname) : '';
+    console.log('KF_SEND msgtype=' + msgtype + ' touser=' + touser + nicknamePart
+      + ' openKfId=' + openKfId + ' ok=' + ok + previewPart
+      + ' resp=' + JSON.stringify(resp).slice(0, 200));
     return { replyMessageId: resp && resp.msgid ? String(resp.msgid) : null, ok, resp };
   }
 
@@ -134,6 +150,61 @@ function createWechatApiClient({
       return withTokenRetry((accessToken) =>
         kfClient.syncMsg({ accessToken, token, openKfId, cursor })
       );
+    },
+
+    /**
+     * Resolve one or more external_userid → customer profile (mainly nickname).
+     *
+     * Reads from cache when fresh, batch-fetches the rest via /cgi-bin/kf/customer/batchget
+     * (max 100 per call), populates the cache, then returns a Map<userid, {nickname, avatar, ...}>.
+     * Always returns the Map — entries simply absent for IDs we couldn't resolve.
+     */
+    async getCustomers(externalUserids) {
+      const result = new Map();
+      const toFetch = [];
+      const seen = new Set();
+      for (const id of externalUserids || []) {
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const cached = getCachedCustomer(id);
+        if (cached) {
+          result.set(id, cached);
+        } else {
+          toFetch.push(id);
+        }
+      }
+
+      // batchget accepts max 100 ids per call
+      for (let i = 0; i < toFetch.length; i += 100) {
+        const chunk = toFetch.slice(i, i + 100);
+        const resp = await withTokenRetry((accessToken) =>
+          kfClient.batchGetCustomers({ accessToken, externalUseridList: chunk })
+        );
+        if (resp && resp.errcode === 0 && Array.isArray(resp.customer_list)) {
+          const fetchedAt = now();
+          for (const c of resp.customer_list) {
+            const entry = {
+              nickname: c.nickname || '',
+              avatar: c.avatar || '',
+              gender: c.gender,
+              unionid: c.unionid || '',
+              fetchedAt,
+            };
+            customerCache.set(c.external_userid, entry);
+            result.set(c.external_userid, entry);
+          }
+        } else if (resp && resp.errcode) {
+          console.log('KF_CUSTOMER_LOOKUP_FAIL errcode=' + resp.errcode + ' errmsg=' + (resp.errmsg || '').slice(0, 100));
+        }
+      }
+      return result;
+    },
+
+    /** Convenience: resolve a single userid → nickname string (empty if not resolvable). */
+    async getNickname(externalUserid) {
+      const map = await this.getCustomers([externalUserid]);
+      const entry = map.get(externalUserid);
+      return entry ? entry.nickname : '';
     },
 
     /** Re-export normalize so the bot doesn't have to dig into kf_client itself. */
