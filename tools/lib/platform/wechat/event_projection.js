@@ -9,9 +9,13 @@ const { getIncomingWechatMessage } = require('./incoming_event');
  */
 function normalizeIncomingWechatEvent(payload) {
   const msg = getIncomingWechatMessage(payload);
+  // Isolate task queue + thread state per kf account: same external_userid talking to
+  // different kf accounts must not share history (different bot personas, possibly different
+  // engines). When openKfId is empty (legacy aispeech path), fall back to bare senderId.
+  const taskKey = msg.openKfId ? `${msg.openKfId}::${msg.fromUser}` : msg.fromUser;
 
   return {
-    taskKey: msg.fromUser,
+    taskKey,
     chatId: msg.fromUser,
     senderId: msg.fromUser,
     messageId: msg.messageId,

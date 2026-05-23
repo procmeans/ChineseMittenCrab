@@ -1,4 +1,33 @@
 {
-  "model": "claude-haiku-4-5-20251001",
-  "port": 8080
+  "model": "claude-opus-4-6",
+  "channel": 9,
+  "port": 8080,
+
+  "_comment_kf_routing": [
+    "Optional per-kf-account engine routing. Each open_kfid (微信客服 account ID)",
+    "can use a different engine + model. Without kf_routing, all incoming kf messages",
+    "use the top-level model + engine. NB: 微信客服 联合版 currently allows only 1",
+    "open_kfid per self-built app to be API-managed (manage_privilege=true), so until",
+    "you have multiple self-built apps configured, only one route here will actually",
+    "fire — others fall back to the top-level engine."
+  ],
+  "kf_routing": {
+    "wk_REPLACE_WITH_kfid_FROM_account_list": {
+      "engine": "claude",
+      "model": "claude-opus-4-6",
+      "account": "default"
+    },
+    "wk_REPLACE_WITH_second_kfid": {
+      "engine": "codex",
+      "account": "xiaocao",
+      "codex": {
+        "bin": "codex",
+        "model": "gpt-5.4",
+        "reasoning_effort": "medium",
+        "cwd": "/path/to/codex/workdir",
+        "sandbox": "danger-full-access",
+        "approval_policy": "never"
+      }
+    }
+  }
 }

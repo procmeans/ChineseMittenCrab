@@ -65,10 +65,22 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
 }
 
 function createBotRuntime(deps) {
-  const { taskQueue, statusStore, apiClient } = deps;
+  const { taskQueue, statusStore, apiClient, kfRouting } = deps;
   let shuttingDown = false;
   const seenMessageIds = new Set();
   const startTime = Date.now();
+
+  // Pick the engine + execInput for a given event. With kfRouting configured, route by
+  // open_kfid so different kf accounts can use different engines (e.g. 肖老师 → claude,
+  // 小草 → codex). Without routing, fall back to the top-level deps.
+  function selectEngineFor(rawEvent) {
+    const openKfId = (rawEvent && (rawEvent.open_kfid || rawEvent.OpenKfId)) || '';
+    if (kfRouting && openKfId && kfRouting[openKfId]) {
+      const route = kfRouting[openKfId];
+      return { runExec: route.runExec, execInput: route.execInput };
+    }
+    return { runExec: deps.runExec, execInput: deps.execInput };
+  }
 
   const runtime = {
     onMessage(rawEvent) {
@@ -128,8 +140,13 @@ function createBotRuntime(deps) {
 
       const taskKey = normalized.taskKey;
 
+      // Per-message engine: real user messages (re-dispatched from sync_msg) carry open_kfid,
+      // so we pick the engine before handing off to message_handler. System events and direct
+      // events without open_kfid fall back to deps.runExec/execInput.
+      const perMessageDeps = Object.assign({}, deps, selectEngineFor(rawEvent));
+
       taskQueue.enqueue(taskKey, () =>
-        handleIncomingMessage(deps, rawEvent)
+        handleIncomingMessage(perMessageDeps, rawEvent)
       ).catch((err) => {
         console.error('TASK_ERROR taskKey=' + taskKey, err.message);
       });
@@ -259,9 +276,31 @@ function main() {
     account: accountConfig,
   });
 
-  // Engine selection — pick claude or codex based on account config
+  // Engine selection — pick claude or codex based on account config (top-level default)
   const engine = resolveEngine(config);
   console.log(`ENGINE_SELECTED account=${accountName} engine=${engine.name}`);
+
+  // Per-kf-account engine routing. Each kf account (open_kfid) can have its own engine + model.
+  // Without kf_routing in the config, all messages use the top-level engine above.
+  //
+  // Config shape:
+  //   "kf_routing": {
+  //     "wk_xxx": { "engine": "claude", "model": "claude-opus-4-6", "account": "default" },
+  //     "wk_yyy": { "engine": "codex", "account": "xiaocao",
+  //                 "codex": { "model": "gpt-5.4", "cwd": "...", "sandbox": "...", ... } }
+  //   }
+  const kfRouting = {};
+  for (const [openKfId, routeCfg] of Object.entries(config.kf_routing || {})) {
+    const subAccountName = routeCfg.account || accountName;
+    const subEngine = resolveEngine(routeCfg);
+    kfRouting[openKfId] = {
+      runExec: subEngine.runExec,
+      execInput: subEngine.buildInput({ config: routeCfg, accountName: subAccountName }),
+      engineName: subEngine.name,
+      accountName: subAccountName,
+    };
+    console.log(`KF_ROUTE openKfId=${openKfId} engine=${subEngine.name} account=${subAccountName}`);
+  }
 
   const port = Number(portArg || config.port || 8080);
 
@@ -287,6 +326,7 @@ function main() {
   // Create bot runtime
   const runtime = createBotRuntime({
     apiClient,
+    kfRouting,
     prepareRuntimeEvent: (event) => {
       const prepared = prepareRuntimeEvent(event);
       // Store routing info so the reply gateway can push back via the same kf account
