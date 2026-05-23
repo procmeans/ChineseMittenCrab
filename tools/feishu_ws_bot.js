@@ -42,7 +42,7 @@ function readArg(name, fallbackValue) {
 }
 
 function createBotRuntime(deps) {
-  const { taskQueue, statusStore, selfOpenId, followUpStates, ignoreUnmentioned } = deps;
+  const { taskQueue, statusStore } = deps;
   let shuttingDown = false;
   const seenMessageIds = new Set();
   const startTime = Date.now();
@@ -76,7 +76,13 @@ function createBotRuntime(deps) {
 
       // Drop group messages that didn't address this bot (no @ and no active follow-up window).
       // Keeps multiple bots in the same chat from all replying when one is @-mentioned.
-      if (shouldIgnoreMessage(normalized, { selfOpenId, followUpStates, ignoreUnmentioned })) {
+      // NB: read selfOpenId off deps each call — it's populated asynchronously after startup
+      // by getBotOpenId(), so destructuring it once at runtime construction would lock in '' forever.
+      if (shouldIgnoreMessage(normalized, {
+        selfOpenId: deps.selfOpenId,
+        followUpStates: deps.followUpStates,
+        ignoreUnmentioned: deps.ignoreUnmentioned,
+      })) {
         console.log('IGNORE_UNADDRESSED messageId=' + messageId + ' chatId=' + normalized.chatId);
         return;
       }

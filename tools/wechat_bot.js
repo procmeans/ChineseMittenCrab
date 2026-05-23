@@ -6,6 +6,8 @@ const { renderWechatReply } = require('./lib/platform/wechat/reply_rendering');
 const { createWechatApiClient } = require('./lib/platform/wechat/api_client');
 const { createWechatReplyGateway } = require('./lib/platform/wechat/reply_gateway');
 const { createCallbackServer } = require('./lib/platform/wechat/callback_server');
+const { createAccessTokenCache } = require('./lib/platform/wechat/access_token');
+const { normalizeKfMessage } = require('./lib/platform/wechat/kf_client');
 const { createRuntimeStatusStore } = require('./lib/monitor/runtime_status_store');
 const { createTaskQueue } = require('./lib/runtime/task_queue');
 const { refreshFollowUpWindow } = require('./lib/runtime/follow_up_window');
@@ -21,18 +23,92 @@ function readArg(name, fallbackValue) {
   return process.argv[index + 1];
 }
 
+async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatchOne }) {
+  const resp = await apiClient.syncQueue({ token: syncToken, openKfId });
+  if (resp && resp.errcode && resp.errcode !== 0) {
+    console.error('KF_SYNC_FAIL errcode=' + resp.errcode + ' errmsg=' + resp.errmsg);
+    return;
+  }
+  const list = (resp && resp.msg_list) || [];
+  console.log('KF_SYNC_OK count=' + list.length + ' has_more=' + (resp && resp.has_more));
+  for (const msg of list) {
+    // origin 3 = user; 4 = bot push echo; 5 = human agent. Reply path must not re-process our own.
+    if (Number(msg.origin) !== 3) {
+      console.log('KF_SKIP_ORIGIN origin=' + msg.origin + ' msgid=' + msg.msgid);
+      continue;
+    }
+    const norm = normalizeKfMessage(msg);
+    if (!norm || !norm.senderId) continue;
+    // Repack as a callback-shaped raw event so the runtime's standard onMessage path picks it up
+    // (dedup, stale check, prepareRuntimeEvent, task_queue, message_handler, reply_gateway).
+    const fakeRaw = {
+      msgid: norm.messageId,
+      userid: norm.senderId,
+      content: norm.text,
+      from: 0,
+      channel: norm.channel,
+      createtime: Math.floor(norm.createTime / 1000),
+      appid: norm.appId,
+      open_kfid: norm.openKfId,
+    };
+    dispatchOne(fakeRaw);
+  }
+  // Page through if has_more — recursive call with new cursor.
+  if (resp && resp.has_more === 1 && resp.next_cursor) {
+    return dispatchKfSyncMessages({
+      apiClient,
+      syncToken,
+      openKfId,
+      dispatchOne,
+    });
+  }
+}
+
 function createBotRuntime(deps) {
-  const { taskQueue, statusStore } = deps;
+  const { taskQueue, statusStore, apiClient } = deps;
   let shuttingDown = false;
   const seenMessageIds = new Set();
   const startTime = Date.now();
 
-  return {
+  const runtime = {
     onMessage(rawEvent) {
       if (shuttingDown) return;
 
+      // 微信客服 (kf.weixin.qq.com / 企业微信联合版) uses a "notify + pull" model:
+      // the callback only carries a sync Token + OpenKfId, NOT the user's text. The actual
+      // message must be fetched via /cgi-bin/kf/sync_msg using access_token + Token, then
+      // each real user message is re-dispatched as a fake callback through this same onMessage.
+      if (rawEvent && rawEvent.MsgType === 'event') {
+        if (rawEvent.Event === 'kf_msg_or_event') {
+          console.log('KF_SYNC_NEEDED openKfId=' + rawEvent.OpenKfId + ' token=' + rawEvent.Token);
+          if (apiClient && typeof apiClient.syncQueue === 'function') {
+            dispatchKfSyncMessages({
+              apiClient,
+              syncToken: rawEvent.Token,
+              openKfId: rawEvent.OpenKfId,
+              dispatchOne: (raw) => runtime.onMessage(raw),
+            }).catch((err) => console.error('KF_DISPATCH_ERROR', err.message));
+          } else {
+            console.log('KF_SYNC_SKIPPED apiClient_unavailable');
+          }
+        } else {
+          // Other kf system events (kf_account_auth_change, customer_msg_send_fail, etc.):
+          // log for visibility but don't process — they're metadata about the account/agent
+          // state, not user messages we should reply to.
+          console.log('KF_EVENT_IGNORED event=' + rawEvent.Event + ' openKfId=' + (rawEvent.AuthAddOpenKfId || rawEvent.OpenKfId || ''));
+        }
+        return;
+      }
+
       const normalized = normalizeIncomingWechatEvent(rawEvent);
       const messageId = normalized.messageId;
+
+      // Drop non-user messages early: from=1 is our own bot push echo, from=2 is human agent.
+      // Replying to those would feedback-loop or hijack a human agent's chat.
+      if (typeof normalized.from === 'number' && normalized.from !== 0) {
+        console.log('IGNORE_NON_USER from=' + normalized.from + ' messageId=' + messageId);
+        return;
+      }
 
       if (normalized.createTime && normalized.createTime < startTime) {
         console.log('STALE_SKIP messageId=' + messageId);
@@ -71,6 +147,7 @@ function createBotRuntime(deps) {
       return shuttingDown;
     },
   };
+  return runtime;
 }
 
 process.on('unhandledRejection', (reason) => {
@@ -102,7 +179,9 @@ function main() {
     try {
       const secrets = loadLocalSecrets();
       const wechatSecrets = secrets.wechat || {};
-      checks.push(wechatSecrets.app_id && wechatSecrets.token && wechatSecrets.encoding_aes_key
+      // token + AESKey are the minimum needed for callback URL verification.
+      // app_id is only used by the legacy 对话开放平台 push path; 微信客服 mode doesn't need it.
+      checks.push(wechatSecrets.token && wechatSecrets.encoding_aes_key
         ? 'wechat=ready' : 'wechat=NO_CREDENTIALS');
     } catch (e) {
       checks.push('wechat=ERROR:' + e.message);
@@ -143,14 +222,24 @@ function main() {
   }
 
   // Load secrets
+  // Schema:
+  //   wechat:
+  //     token: <callback verification token, configured in kf.weixin.qq.com 开发配置>
+  //     encoding_aes_key: <43-char AES key from same page>
+  //     kf:
+  //       corpid: <ww... from 企业微信 管理后台>
+  //       secret: <自建应用 secret, authorized to 微信客服 API>
+  //   The legacy aispeech `app_id` field is no longer used by the kf code path.
   const secrets = loadLocalSecrets();
   const wechatSecrets = secrets.wechat || {};
-  const appId = wechatSecrets.app_id;
   const token = wechatSecrets.token;
   const encodingAesKey = wechatSecrets.encoding_aes_key;
+  const kfSecrets = wechatSecrets.kf || {};
+  const corpid = kfSecrets.corpid;
+  const corpsecret = kfSecrets.secret;
 
-  if (!appId || !token) {
-    console.error('ERROR: Missing app_id or token in config/secrets/local.yaml (wechat section)');
+  if (!token || !encodingAesKey) {
+    console.error('ERROR: Missing wechat.token or wechat.encoding_aes_key in config/secrets/local.yaml');
     process.exitCode = 1;
     return;
   }
@@ -176,9 +265,19 @@ function main() {
 
   const port = Number(portArg || config.port || 8080);
 
-  // Create API client and reply infrastructure
-  const apiClient = createWechatApiClient({ appId, token, encodingAesKey });
-  const openidMap = new Map(); // messageId → openid, populated by onMessage
+  // Create API client (kf send_msg + sync_msg via cached access_token) and reply infrastructure.
+  // apiClient may be null if kf credentials are missing — bot still starts and can verify the
+  // callback URL, but reply path will no-op (sendTextReply returns { replyMessageId: null }).
+  const defaultChannel = Number(config.channel || 9);
+  let apiClient = null;
+  if (corpid && corpsecret) {
+    const tokenCache = createAccessTokenCache({ corpid, secret: corpsecret });
+    apiClient = createWechatApiClient({ accessTokenCache: tokenCache });
+    console.log('KF_API_READY corpid=' + corpid);
+  } else {
+    console.warn('KF_API_DISABLED reason=missing_kf_corpid_or_secret (callbacks verify but replies will no-op)');
+  }
+  const openidMap = new Map(); // messageId → { openid, openKfId, channel, appid } routing entry
   const replyGateway = createWechatReplyGateway(apiClient, openidMap);
   const statusStore = createRuntimeStatusStore({ account: accountName });
   const taskQueue = createTaskQueue();
@@ -187,10 +286,16 @@ function main() {
 
   // Create bot runtime
   const runtime = createBotRuntime({
+    apiClient,
     prepareRuntimeEvent: (event) => {
       const prepared = prepareRuntimeEvent(event);
-      // Store openid mapping so reply gateway can find the user
-      openidMap.set(prepared.messageId, prepared.senderId);
+      // Store routing info so the reply gateway can push back via the same kf account
+      openidMap.set(prepared.messageId, {
+        openid: prepared.senderId,
+        openKfId: prepared.openKfId,
+        channel: typeof prepared.channel === 'number' ? prepared.channel : defaultChannel,
+        appid: prepared.appId,
+      });
       return prepared;
     },
     renderBotReply,
@@ -209,7 +314,6 @@ function main() {
   const callbackServer = createCallbackServer({
     token,
     encodingAesKey,
-    appId,
     onMessage: (payload) => {
       console.log('RAW_EVENT:', JSON.stringify(payload, null, 2));
       return runtime.onMessage(payload);

@@ -31,6 +31,31 @@ describe('wechat/crypto', () => {
     it('returns false for an invalid signature', () => {
       assert.strictEqual(verifySignature(testToken, '123', 'nonce', 'bad_sig'), false);
     });
+
+    it('accepts the 4-arg form used by 微信客服 / 企业微信 (includes echostr/encrypt)', () => {
+      const timestamp = '1616461382';
+      const nonce = 'abc123';
+      const echostr = 'someEncryptedEchostr';
+      const parts = [testToken, timestamp, nonce, echostr];
+      parts.sort();
+      const expected = crypto.createHash('sha1').update(parts.join('')).digest('hex');
+
+      assert.strictEqual(
+        verifySignature(testToken, timestamp, nonce, expected, echostr),
+        true
+      );
+    });
+
+    it('still validates 3-arg form when caller forgets to pass encrypt', () => {
+      const timestamp = '1616461382';
+      const nonce = 'abc123';
+      const parts = [testToken, timestamp, nonce];
+      parts.sort();
+      const expected = crypto.createHash('sha1').update(parts.join('')).digest('hex');
+
+      // No 5th arg → falls back to 3-arg form
+      assert.strictEqual(verifySignature(testToken, timestamp, nonce, expected), true);
+    });
   });
 
   describe('decodeAesKey', () => {

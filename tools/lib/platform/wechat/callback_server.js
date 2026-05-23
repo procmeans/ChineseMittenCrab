@@ -3,6 +3,43 @@ const { URL } = require('node:url');
 const { verifySignature, decryptMessage, encryptMessage } = require('./crypto');
 
 /**
+ * Extract a single XML element's text content. Supports both CDATA-wrapped and bare values.
+ * Returns '' if the tag isn't present. Sufficient for the flat <xml>...</xml> shape WeChat uses
+ * (no nested children, no namespaces). Avoids pulling in xml2js for a single one-level need.
+ */
+function extractCdataTag(xml, tagName) {
+  const re = new RegExp(`<${tagName}>\\s*(?:<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>|([^<]*))\\s*</${tagName}>`);
+  const m = xml.match(re);
+  if (!m) return '';
+  return (m[1] !== undefined ? m[1] : m[2]) || '';
+}
+
+/**
+ * Parse a flat <xml>...</xml> blob into a JS object. Each top-level child becomes a key.
+ * Numeric strings (CreateTime, MsgId, AgentID) stay as strings — downstream code coerces.
+ */
+function parseFlatXml(xml) {
+  const obj = {};
+  const re = /<([A-Za-z_][A-Za-z0-9_]*)>\s*(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))\s*<\/\1>/g;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    if (m[1] === 'xml') continue;
+    obj[m[1]] = (m[2] !== undefined ? m[2] : m[3]) || '';
+  }
+  return obj;
+}
+
+/**
+ * Parse the decrypted callback message. Aispeech sends JSON; 微信客服/公众号 sends XML.
+ * Always returns a plain object so downstream parsers can read fields uniformly.
+ */
+function parseDecryptedMessage(plaintext) {
+  const trimmed = String(plaintext || '').trimStart();
+  if (trimmed.startsWith('<')) return parseFlatXml(trimmed);
+  try { return JSON.parse(trimmed); } catch (_) { return { _raw: trimmed }; }
+}
+
+/**
  * Create an HTTP callback server for the WeChat Dialog Open Platform.
  *
  * - GET requests: URL verification (echostr challenge)
@@ -16,6 +53,20 @@ function createCallbackServer({ token, encodingAesKey, appId, onMessage, port })
     const msgSignature = url.searchParams.get('msg_signature') || url.searchParams.get('signature') || '';
     const timestamp = url.searchParams.get('timestamp') || '';
     const nonce = url.searchParams.get('nonce') || '';
+
+    // Catch-all access log so we can tell "platform didn't push" from "platform pushed but X".
+    console.log('HTTP_HIT ' + req.method + ' ' + req.url + ' ua="' + (req.headers['user-agent'] || '') + '"');
+
+    // 企业微信 trusted-domain verification: platform GETs /WW_verify_<TOKEN>.txt and expects
+    // the response body to be just the <TOKEN> part. Serve this without needing the user to
+    // upload an actual file to the web root — handy for tunneled dev setups.
+    const wwMatch = req.method === 'GET' && url.pathname.match(/^\/WW_verify_([A-Za-z0-9]+)\.txt$/);
+    if (wwMatch) {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(wwMatch[1]);
+      console.log('WW_VERIFY served path=' + url.pathname + ' body=' + wwMatch[1]);
+      return;
+    }
 
     if (req.method === 'GET') {
       handleVerification(req, res, { token, encodingAesKey, msgSignature, timestamp, nonce, url });
@@ -57,14 +108,16 @@ function createCallbackServer({ token, encodingAesKey, appId, onMessage, port })
 function handleVerification(req, res, { token, encodingAesKey, msgSignature, timestamp, nonce, url }) {
   const echostr = url.searchParams.get('echostr') || '';
 
-  if (!verifySignature(token, timestamp, nonce, msgSignature)) {
-    console.log('VERIFY_FAIL signature mismatch');
+  // 微信客服 / 企业微信 mix echostr into the signature; 公众号 doesn't.
+  // verifySignature tries both forms so this works for either spec without per-platform code.
+  if (!verifySignature(token, timestamp, nonce, msgSignature, echostr)) {
+    console.log('VERIFY_FAIL signature mismatch token=' + (token || '').slice(0, 4) + ' ts=' + timestamp + ' nonce=' + nonce);
     res.writeHead(403);
     res.end('Signature verification failed');
     return;
   }
 
-  // echostr may be encrypted or plain depending on platform config
+  // echostr is base64 ciphertext for 微信客服/企业微信; for 公众号 it may be plaintext.
   let plainEchostr = echostr;
   if (encodingAesKey && echostr) {
     try {
@@ -78,7 +131,7 @@ function handleVerification(req, res, { token, encodingAesKey, msgSignature, tim
 
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end(plainEchostr);
-  console.log('VERIFY_OK echostr returned');
+  console.log('VERIFY_OK echostr returned len=' + plainEchostr.length);
 }
 
 /**
@@ -98,21 +151,32 @@ function handleMessage(req, res, { token, encodingAesKey, appId, msgSignature, t
       let payload;
 
       if (encodingAesKey && msgSignature) {
-        // Encrypted mode: verify signature and decrypt
-        if (!verifySignature(token, timestamp, nonce, msgSignature)) {
+        // Encrypted mode. Body comes in two shapes across the WeChat ecosystem:
+        //   - 微信客服 / 企业微信 / 公众号: XML — `<xml><Encrypt><![CDATA[...]]></Encrypt>...</xml>`
+        //   - 对话开放平台 (aispeech): JSON — `{ "encrypt": "..." }`
+        // Detect by leading character; extract `Encrypt` either way.
+        const trimmed = String(body || '').trimStart();
+        let cipherText = '';
+        let parsedOuter = null;
+        if (trimmed.startsWith('<')) {
+          cipherText = extractCdataTag(trimmed, 'Encrypt');
+        } else {
+          parsedOuter = JSON.parse(trimmed);
+          cipherText = parsedOuter.encrypt || parsedOuter.Encrypt || '';
+        }
+
+        if (!verifySignature(token, timestamp, nonce, msgSignature, cipherText || '')) {
           console.log('MSG_VERIFY_FAIL signature mismatch');
           return;
         }
 
-        const parsed = typeof body === 'string' ? JSON.parse(body) : body;
-        const cipherText = parsed.encrypt || parsed.Encrypt;
-
         if (cipherText) {
           const { message } = decryptMessage(encodingAesKey, cipherText);
-          payload = JSON.parse(message);
+          // Decrypted plaintext is XML for 微信客服/公众号, JSON for aispeech.
+          payload = parseDecryptedMessage(message);
         } else {
-          // Body might already be decrypted (plaintext mode)
-          payload = parsed;
+          // Body was plaintext-mode JSON (no encryption configured on platform side)
+          payload = parsedOuter || {};
         }
       } else {
         // Plaintext mode

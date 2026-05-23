@@ -54,4 +54,39 @@ describe('wechat/incoming_event', () => {
     const msg = getIncomingWechatMessage({ timestamp: 1710000000000 });
     assert.strictEqual(msg.createTime, 1710000000000);
   });
+
+  it('parses 对话开放平台 third-party kefu format (userid/content/from/channel/createtime)', () => {
+    const payload = {
+      userid: 'oWxKf123',
+      appid: 'wx_kefu_app',
+      content: '你好啊',
+      from: 0,
+      channel: 9,
+      createtime: 1710000000,
+      msgid: 'wx_msg_42',
+    };
+    const msg = getIncomingWechatMessage(payload);
+    assert.strictEqual(msg.fromUser, 'oWxKf123');
+    assert.strictEqual(msg.text, '你好啊');
+    assert.strictEqual(msg.from, 0);
+    assert.strictEqual(msg.channel, 9);
+    assert.strictEqual(msg.appId, 'wx_kefu_app');
+    assert.strictEqual(msg.messageId, 'wx_msg_42');
+    assert.strictEqual(msg.createTime, 1710000000000);
+  });
+
+  it('surfaces from=1 (bot echo) and from=2 (human agent) so the runtime can filter them', () => {
+    const botEcho = getIncomingWechatMessage({ userid: 'u', content: 'x', from: 1 });
+    assert.strictEqual(botEcho.from, 1);
+    const humanAgent = getIncomingWechatMessage({ userid: 'u', content: 'x', from: 2 });
+    assert.strictEqual(humanAgent.from, 2);
+  });
+
+  it('stringifies non-string content (rich payloads) so downstream stays text-safe', () => {
+    const msg = getIncomingWechatMessage({
+      userid: 'u',
+      content: { type: 'image', media_id: 'm1' },
+    });
+    assert.ok(msg.text.includes('image'));
+  });
 });

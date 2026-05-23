@@ -1,14 +1,32 @@
 const crypto = require('node:crypto');
 
 /**
- * Verify WeChat message signature.
- * SHA1(sort([token, timestamp, nonce])) === msgSignature
+ * Verify a WeChat callback signature.
+ *
+ * Supports both signature schemes used across the WeChat ecosystem:
+ *   - 4-arg form: SHA1(sort([token, timestamp, nonce, encrypt])) — used by 微信客服
+ *     (kf.weixin.qq.com) and 企业微信. `encrypt` is the GET `echostr` for URL verification
+ *     or the POST body's `encrypt` field for message delivery.
+ *   - 3-arg form: SHA1(sort([token, timestamp, nonce])) — used by 公众号 server URL
+ *     verification when there is no echostr in the signature payload.
+ *
+ * We try the 4-arg form first (the modern, stricter spec) and fall back to the 3-arg form
+ * so that both 公众号 and 客服 callbacks work without per-platform branching at the caller.
  */
-function verifySignature(token, timestamp, nonce, msgSignature) {
-  const parts = [token, String(timestamp), String(nonce)];
-  parts.sort();
-  const hash = crypto.createHash('sha1').update(parts.join('')).digest('hex');
-  return hash === msgSignature;
+function verifySignature(token, timestamp, nonce, msgSignature, encrypt) {
+  const tryHash = (parts) => {
+    const sorted = [...parts].sort();
+    return crypto.createHash('sha1').update(sorted.join('')).digest('hex');
+  };
+
+  const t = String(token || '');
+  const ts = String(timestamp || '');
+  const n = String(nonce || '');
+  const e = String(encrypt || '');
+
+  if (tryHash([t, ts, n, e]) === msgSignature) return true;
+  if (tryHash([t, ts, n]) === msgSignature) return true;
+  return false;
 }
 
 /**
