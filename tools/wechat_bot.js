@@ -73,20 +73,10 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
       + ' msgid=' + norm.messageId + ' msgtype=' + norm.msgtype
       + ' text=' + JSON.stringify(String(norm.text || '').slice(0, 500)));
 
-    // Send a "thinking" placeholder right away so the user sees activity while claude / codex
-    // runs (long tasks can take minutes). Fire-and-forget so we don't delay the actual dispatch;
-    // the placeholder is best-effort and a failure here doesn't block reply delivery.
-    const isFresh = (now - norm.createTime) < FRESH_WINDOW_MS;
-    if (isFresh && apiClient && typeof apiClient.sendText === 'function') {
-      apiClient.sendText({
-        touser: norm.senderId,
-        openKfId: norm.openKfId,
-        text: '⏳ 收到,正在思考...',
-      }).catch((err) => console.error('KF_THINKING_FAIL ' + (err && err.message)));
-    }
-
     // Repack as a callback-shaped raw event so the runtime's standard onMessage path picks it up
     // (dedup, stale check, prepareRuntimeEvent, task_queue, message_handler, reply_gateway).
+    // The thinking placeholder is sent inside onMessage AFTER dedup runs, so a duplicated
+    // callback (kf platform occasionally retries) doesn't fire the placeholder twice.
     const fakeRaw = {
       msgid: norm.messageId,
       userid: norm.senderId,
@@ -182,6 +172,23 @@ function createBotRuntime(deps) {
         if (seenMessageIds.size > 1000) {
           seenMessageIds.delete(seenMessageIds.values().next().value);
         }
+      }
+
+      // Thinking placeholder for kf user messages (fakeRaw from sync_msg dispatch). Sent
+      // AFTER dedup so a duplicated kf_msg_or_event callback — which the platform occasionally
+      // retries — only triggers ONE placeholder instead of two. Fire-and-forget so we don't
+      // delay enqueueing the real work.
+      // Conditions: must be a kf user message (open_kfid present + from=0), and message must
+      // be fresh (within 60s) so bot startup draining an old queue doesn't spray placeholders.
+      const isKfUserMsg = rawEvent && rawEvent.open_kfid && rawEvent.userid && Number(rawEvent.from || 0) === 0;
+      const FRESH_WINDOW_MS = 60_000;
+      const isFresh = normalized.createTime > 0 && (Date.now() - normalized.createTime) < FRESH_WINDOW_MS;
+      if (isKfUserMsg && isFresh && apiClient && typeof apiClient.sendText === 'function') {
+        apiClient.sendText({
+          touser: rawEvent.userid,
+          openKfId: rawEvent.open_kfid,
+          text: '⏳ 收到,正在思考...',
+        }).catch((err) => console.error('KF_THINKING_FAIL ' + (err && err.message)));
       }
 
       const taskKey = normalized.taskKey;
