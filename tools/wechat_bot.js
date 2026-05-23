@@ -47,6 +47,13 @@ async function dispatchKfSyncMessages({ apiClient, syncToken, openKfId, dispatch
     const norm = normalizeKfMessage(msg);
     if (!norm || !norm.senderId) continue;
 
+    // Conversation log line — user-side. Quote-wrap text and truncate to 500 chars so a long
+    // message doesn't push log entries off-screen. Pairs with the KF_SEND line that records
+    // bot's outbound text (see api_client wrapSendResult).
+    console.log('KF_USER_MSG userid=' + norm.senderId + ' openKfId=' + norm.openKfId
+      + ' msgid=' + norm.messageId + ' msgtype=' + norm.msgtype
+      + ' text=' + JSON.stringify(String(norm.text || '').slice(0, 500)));
+
     // Send a "thinking" placeholder right away so the user sees activity while claude / codex
     // runs (long tasks can take minutes). Fire-and-forget so we don't delay the actual dispatch;
     // the placeholder is best-effort and a failure here doesn't block reply delivery.

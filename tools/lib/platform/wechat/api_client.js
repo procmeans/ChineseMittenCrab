@@ -63,10 +63,11 @@ function createWechatApiClient({
     return resp;
   }
 
-  function wrapSendResult(resp, msgtype, touser, openKfId) {
+  function wrapSendResult(resp, msgtype, touser, openKfId, contentPreview) {
     const ok = resp && (resp.errcode === 0 || resp.errcode === undefined);
+    const previewPart = contentPreview ? ' text=' + JSON.stringify(String(contentPreview).slice(0, 500)) : '';
     console.log('KF_SEND msgtype=' + msgtype + ' touser=' + touser + ' openKfId=' + openKfId
-      + ' ok=' + ok + ' resp=' + JSON.stringify(resp).slice(0, 200));
+      + ' ok=' + ok + previewPart + ' resp=' + JSON.stringify(resp).slice(0, 200));
     return { replyMessageId: resp && resp.msgid ? String(resp.msgid) : null, ok, resp };
   }
 
@@ -80,7 +81,7 @@ function createWechatApiClient({
         openKfId,
         sender: (accessToken) => kfClient.sendTextMsg({ accessToken, touser, openKfId, text }),
       });
-      return wrapSendResult(resp, 'text', touser, openKfId);
+      return wrapSendResult(resp, 'text', touser, openKfId, text);
     },
 
     /**
@@ -106,11 +107,11 @@ function createWechatApiClient({
           const fresh = await accessTokenCache.get();
           const retryResp = await mediaClient.uploadMedia({ accessToken: fresh, filePath, type: resolvedType });
           if (!retryResp || !retryResp.media_id) {
-            return wrapSendResult(retryResp, resolvedType, touser, openKfId);
+            return wrapSendResult(retryResp, resolvedType, touser, openKfId, filePath);
           }
           uploadResp.media_id = retryResp.media_id;
         } else {
-          return wrapSendResult(uploadResp, resolvedType, touser, openKfId);
+          return wrapSendResult(uploadResp, resolvedType, touser, openKfId, filePath);
         }
       }
 
@@ -122,7 +123,7 @@ function createWechatApiClient({
         openKfId,
         sender: (at) => kfClient.sendMediaMsg({ accessToken: at, touser, openKfId, msgtype: resolvedType, mediaId }),
       });
-      return wrapSendResult(resp, resolvedType, touser, openKfId);
+      return wrapSendResult(resp, resolvedType, touser, openKfId, filePath);
     },
 
     /**
