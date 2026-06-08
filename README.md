@@ -254,15 +254,64 @@ callback_server 同时 serve `WW_verify_xxx.txt` 文件,企业微信可信域名
   ```
 - **⚠️ 易忽视的开关**:企业微信「微信客服」**应用详情页右上角的蓝色开关**(`https://work.weixin.qq.com/wework_admin/frame#/apps`)关掉 = 整个微信客服 wecom 模式停 = 所有 wecom API 立刻 95012。误碰过一次,排查 1 小时才发现。**不要点应用页右上角任何疑似开关的东西**。
 
+## 微信 ClawBot 通道
+
+ClawBot 是独立的扫码微信通道,不替换上面的企业微信「微信客服」通道。Node 侧继续复用当前消息队列、Claude/Codex 引擎、上下文和文件回复逻辑;Python bridge 只负责二维码登录、长轮询收消息、typing、文本和文件发送。
+
+### 安装 ClawBot SDK
+
+SDK 需要 Python 3.11+。macOS 上建议用 Homebrew Python 建一个项目内 venv:
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv .venv-clawbot
+.venv-clawbot/bin/python -m pip install git+https://github.com/minibear2021/wechat_clawbot_sdk.git
+```
+
+`config/clawbot/default.json` 默认使用 `.venv-clawbot/bin/python` 和 `.clawbot-state`。检查环境:
+
+```bash
+node tools/clawbot_bot.js --account default --dry-run
+```
+
+应看到:
+
+```text
+CLAWBOT_DRY_RUN account=default config=ready python=ready sdk=ready engine=ready
+```
+
+### 前台登录 / 生成二维码
+
+```bash
+npm run clawbot:bot
+```
+
+首次启动时日志会输出 `CLAWBOT_LOGIN_QR https://liteapp.weixin.qq.com/q/...`,把这个链接发给要登录的人,对方用微信打开并确认。登录成功后会输出 `CLAWBOT_READY account=...`,登录态会写入 `.clawbot-state/`,后续重启会自动复用。
+
+二维码有效时间由微信服务端决定;SDK 默认最多等待 480 秒,二维码过期后最多自动刷新 3 次。实际操作建议让对方在 1-2 分钟内扫码确认;如果链接过期,重新运行启动命令拿新的 `CLAWBOT_LOGIN_QR`。
+
+给别人单独生成一个账号二维码时,用独立 account 和 state 目录:
+
+```bash
+cat > config/clawbot/friend.json <<'EOF'
+{
+  "engine": "claude",
+  "python_bin": ".venv-clawbot/bin/python",
+  "state_dir": ".clawbot-state-friend"
+}
+EOF
+
+node tools/clawbot_bot.js --account friend
+```
+
 ## macOS 后台运行(LaunchAgent)
 
-`tools/launchd_ctl.sh` 一键管理 4 个服务:`feishu-default` / `feishu-xiaocao` / `wechat-default` / `cloudflared`。每个服务 `RunAtLoad: true` + `KeepAlive` 异常重启,所以 mac 重启自启、bot crash 自愈。
+`tools/launchd_ctl.sh` 一键管理 5 个服务:`feishu-default` / `feishu-xiaocao` / `wechat-default` / `clawbot-default` / `cloudflared`。每个服务 `RunAtLoad: true` + `KeepAlive` 异常重启,所以 mac 重启自启、bot crash 自愈。
 
 ```bash
 ./tools/launchd_ctl.sh install        # 安装并启动所有服务
-./tools/launchd_ctl.sh status         # 看 4 个服务 PID + 日志末行
+./tools/launchd_ctl.sh status         # 看 5 个服务 PID + 日志末行
 ./tools/launchd_ctl.sh restart        # 全部重启(配置改完用)
-./tools/launchd_ctl.sh logs feishu-default  # 实时跟某个服务日志
+./tools/launchd_ctl.sh logs clawbot-default # 实时跟 ClawBot 日志
 ./tools/launchd_ctl.sh uninstall      # 完全移除
 ```
 

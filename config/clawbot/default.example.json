@@ -1,0 +1,6 @@
+{
+  "engine": "claude",
+  "model": "",
+  "python_bin": ".venv-clawbot/bin/python",
+  "state_dir": ".clawbot-state"
+}

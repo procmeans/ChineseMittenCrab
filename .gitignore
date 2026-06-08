@@ -11,5 +11,9 @@ config/wechat/*.json
 # Runtime logs
 logs/
 
+# ClawBot local runtime state
+.venv-clawbot/
+.clawbot-state*/
+
 # Local overrides of CLAUDE.md and similar
 *.local

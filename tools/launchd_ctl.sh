@@ -5,6 +5,7 @@
 #   cmr.feishu-default     — feishu_ws_bot --account default (claude / 肖老师)
 #   cmr.feishu-xiaocao     — feishu_ws_bot --account xiaocao (codex / 小草)
 #   cmr.wechat-default     — wechat_bot --account default (claude / 微信客服)
+#   cmr.clawbot-default    — clawbot_bot --account default (扫码微信 ClawBot)
 #   cmr.cloudflared        — cloudflared named tunnel for kf.dancidanyu.com
 #
 # Each service:
@@ -146,6 +147,7 @@ SERVICES=(
   "feishu-default|render_node_plist|feishu_ws_bot.js|default"
   "feishu-xiaocao|render_node_plist|feishu_ws_bot.js|xiaocao"
   "wechat-default|render_node_plist|wechat_bot.js|default"
+  "clawbot-default|render_node_plist|clawbot_bot.js|default"
   "cloudflared|render_cloudflared_plist"
 )
 
@@ -161,6 +163,8 @@ cmd_install() {
   echo "→ Stopping any running CMR processes (manual launches)..."
   pkill -9 -f "feishu_ws_bot.js" || true
   pkill -9 -f "wechat_bot.js" || true
+  pkill -9 -f "clawbot_bot.js" || true
+  pkill -9 -f "clawbot_bridge.py" || true
   pkill -9 -f "cloudflared tunnel run" || true
   sleep 1
 
@@ -250,7 +254,7 @@ cmd_status() {
 cmd_logs() {
   local name="${1:-}"
   if [[ -z "${name}" ]]; then
-    echo "usage: $0 logs <feishu-default|feishu-xiaocao|wechat-default|cloudflared>" >&2
+    echo "usage: $0 logs <feishu-default|feishu-xiaocao|wechat-default|clawbot-default|cloudflared>" >&2
     exit 1
   fi
   local logfile="${LOG_DIR}/cmr.${name}.log"
