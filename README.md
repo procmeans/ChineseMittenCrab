@@ -1,11 +1,12 @@
 # ChineseMittenCrab
 
-一个运行在 macOS 本地的多平台 AI 机器人,把 [Claude Code CLI](https://claude.ai/code) 和 [Codex CLI](https://openai.com/index/codex/) 接到飞书 / 微信客服上。引擎可按账号切换,多个机器人可共处一群互不抢答,守护进程自启自愈。
+一个运行在 macOS 本地的多平台 AI 机器人,把 [Claude Code CLI](https://claude.ai/code) 和 [Codex CLI](https://openai.com/index/codex/) 接到飞书 / 微信客服 / 微信 ClawBot 上。引擎可按账号切换,多个机器人可共处一群互不抢答,守护进程自启自愈。
 
 ## 功能
 
 - **飞书**:WebSocket 长连接,群聊 @ 机器人或私聊触发,支持引用消息、图片、文件、富文本卡片
 - **微信客服**:企业微信内部接入 + 客服 API,客户扫客服二维码即聊
+- **微信 ClawBot**:扫码登录普通微信 ClawBot 通道,长轮询收消息,支持文本、typing 和文件发送
 - **双引擎**:每个账号可独立选 `claude` 或 `codex`
 - **多机器人协作**:同群多 bot 时只有被 @ 的回复,其他静默
 - **对话上下文**:5 分钟追问窗口,重启自动恢复磁盘持久化历史
@@ -16,7 +17,7 @@
 
 - macOS + Node.js 18+
 - [Claude Code CLI](https://claude.ai/code) 或 [Codex CLI](https://openai.com/index/codex/) 至少装一个并登录
-- 飞书自建应用(开 WebSocket 长连接事件订阅);或微信客服 + 企业微信(进阶,见下方专章)
+- 飞书自建应用(开 WebSocket 长连接事件订阅);或微信客服 + 企业微信;或微信 ClawBot SDK(进阶,见下方专章)
 
 ## 快速开始
 
@@ -82,6 +83,7 @@ npm run feishu:bot
 |---|---|
 | `config/secrets/local.yaml` | 飞书 app_id / app_secret（不提交 git）|
 | `config/feishu/default.json` | 账号配置，支持选择 `engine`（`claude` 或 `codex`，默认 `claude`）和指定模型 |
+| `config/clawbot/default.json` | ClawBot 账号配置，指定 Python venv 和本地登录态目录 |
 | `~/.chinese-mitten-crab/claude/default/.claude/CLAUDE.md` | Claude 引擎系统提示词，控制角色和行为 |
 | `~/.chinese-mitten-crab/claude/default/.claude/settings.json` | Claude 权限配置 |
 | `~/.chinese-mitten-crab/codex/default/.codex/CODEX.md` | Codex 引擎系统提示词（可选，仅当 engine=codex） |
