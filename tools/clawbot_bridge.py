@@ -130,7 +130,7 @@ async def run() -> int:
                         await client.send_file(
                             account_id=command.get("account_id") or account_id,
                             user_id=command["user_id"],
-                            file_path=Path(command["file_path"]),
+                            local_path=Path(command["file_path"]),
                         )
                     elif command_type == "send_typing":
                         status_value = command.get("status", int(TypingStatus.TYPING))
