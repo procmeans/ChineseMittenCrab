@@ -307,11 +307,11 @@ node tools/clawbot_bot.js --account friend
 
 ## macOS 后台运行(LaunchAgent)
 
-`tools/launchd_ctl.sh` 一键管理 5 个服务:`feishu-default` / `feishu-xiaocao` / `wechat-default` / `clawbot-default` / `cloudflared`。每个服务 `RunAtLoad: true` + `KeepAlive` 异常重启,所以 mac 重启自启、bot crash 自愈。
+`tools/launchd_ctl.sh` 一键管理固定服务:`feishu-default` / `feishu-xiaocao` / `wechat-default` / `cloudflared`,并自动把 `config/clawbot/*.json` 里的每个 ClawBot 账号装成 `cmr.clawbot-<account>` 服务。每个服务 `RunAtLoad: true` + `KeepAlive` 异常重启,所以 mac 重启自启、bot crash 自愈。
 
 ```bash
 ./tools/launchd_ctl.sh install        # 安装并启动所有服务
-./tools/launchd_ctl.sh status         # 看 5 个服务 PID + 日志末行
+./tools/launchd_ctl.sh status         # 看所有已配置服务 PID + 日志末行
 ./tools/launchd_ctl.sh restart        # 全部重启(配置改完用)
 ./tools/launchd_ctl.sh logs clawbot-default # 实时跟 ClawBot 日志
 ./tools/launchd_ctl.sh uninstall      # 完全移除
@@ -319,7 +319,7 @@ node tools/clawbot_bot.js --account friend
 
 日志位置:`~/Library/Logs/cmr/cmr.<service>.log` —— **不在** `~/Documents/` 下,这是 macOS TCC 隐私限制(LaunchAgents 写 `~/Documents/` 会静默失败,launchd 报 exit 78 EX_CONFIG 一直 throttle)。
 
-要修改默认服务清单,编辑 `tools/launchd_ctl.sh` 顶部的 `SERVICES` 数组。
+要新增 ClawBot 账号,复制 `config/clawbot/default.json` 为 `config/clawbot/<name>.json`,把 `state_dir` 改成独立目录,然后运行 `./tools/launchd_ctl.sh install` 或 `restart`。
 
 ## 监控
 

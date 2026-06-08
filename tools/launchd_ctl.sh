@@ -6,6 +6,7 @@
 #   cmr.feishu-xiaocao     — feishu_ws_bot --account xiaocao (codex / 小草)
 #   cmr.wechat-default     — wechat_bot --account default (claude / 微信客服)
 #   cmr.clawbot-default    — clawbot_bot --account default (扫码微信 ClawBot)
+#   cmr.clawbot-<account>  — clawbot_bot --account <account> (additional ClawBot accounts from config/clawbot/*.json)
 #   cmr.cloudflared        — cloudflared named tunnel for kf.dancidanyu.com
 #
 # Each service:
@@ -142,14 +143,31 @@ EOF
 # Service table
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Each row: <short-name>|<plist-renderer>|<extra args to renderer>
-SERVICES=(
+FIXED_SERVICES=(
   "feishu-default|render_node_plist|feishu_ws_bot.js|default"
   "feishu-xiaocao|render_node_plist|feishu_ws_bot.js|xiaocao"
   "wechat-default|render_node_plist|wechat_bot.js|default"
-  "clawbot-default|render_node_plist|clawbot_bot.js|default"
   "cloudflared|render_cloudflared_plist"
 )
+
+clawbot_services() {
+  local config_dir="${CMR_ROOT}/config/clawbot"
+  [[ -d "${config_dir}" ]] || return 0
+
+  local file account
+  while IFS= read -r file; do
+    account="$(basename "${file}" .json)"
+    [[ "${account}" == *.example ]] && continue
+    echo "clawbot-${account}|render_node_plist|clawbot_bot.js|${account}"
+  done < <(
+    find "${config_dir}" -maxdepth 1 -type f -name '*.json' ! -name '*.example.json' | sort
+  )
+}
+
+all_services() {
+  printf '%s\n' "${FIXED_SERVICES[@]}"
+  clawbot_services
+}
 
 label_for() { echo "cmr.${1}"; }
 plist_path_for() { echo "${LA_DIR}/$(label_for "$1").plist"; }
@@ -172,8 +190,7 @@ cmd_install() {
     echo "⚠ cloudflared token not found at ${CF_TOKEN_FILE} — cloudflared service will be installed but won't connect until you write the token there."
   fi
 
-  for entry in "${SERVICES[@]}"; do
-    IFS='|' read -r name renderer arg1 arg2 <<< "${entry}"
+  while IFS='|' read -r name renderer arg1 arg2; do
     local label
     label="$(label_for "${name}")"
     local plist
@@ -190,7 +207,7 @@ cmd_install() {
     launchctl bootout "gui/$(id -u)/${label}" 2>/dev/null || true
     launchctl bootstrap "gui/$(id -u)" "${plist}"
     echo "   loaded: ${plist}"
-  done
+  done < <(all_services)
 
   echo
   echo "✓ All services installed. Status:"
@@ -198,8 +215,7 @@ cmd_install() {
 }
 
 cmd_uninstall() {
-  for entry in "${SERVICES[@]}"; do
-    IFS='|' read -r name _ _ _ <<< "${entry}"
+  while IFS='|' read -r name _ _ _; do
     local label
     label="$(label_for "${name}")"
     local plist
@@ -208,26 +224,24 @@ cmd_uninstall() {
     echo "→ Removing ${label}"
     launchctl bootout "gui/$(id -u)/${label}" 2>/dev/null || true
     rm -f "${plist}"
-  done
+  done < <(all_services)
   echo "✓ Uninstalled."
 }
 
 cmd_restart() {
-  for entry in "${SERVICES[@]}"; do
-    IFS='|' read -r name _ _ _ <<< "${entry}"
+  while IFS='|' read -r name _ _ _; do
     local label
     label="$(label_for "${name}")"
 
     echo "→ Restarting ${label}"
     launchctl kickstart -k "gui/$(id -u)/${label}" 2>/dev/null \
       || echo "   (not loaded — run 'install' first)"
-  done
+  done < <(all_services)
 }
 
 cmd_status() {
   printf "%-25s %-10s %-10s %s\n" "SERVICE" "PID" "EXIT" "LATEST LOG LINE"
-  for entry in "${SERVICES[@]}"; do
-    IFS='|' read -r name _ _ _ <<< "${entry}"
+  while IFS='|' read -r name _ _ _; do
     local label
     label="$(label_for "${name}")"
 
@@ -248,13 +262,13 @@ cmd_status() {
       last="$(tail -n 1 "${logfile}" 2>/dev/null | cut -c1-80)"
     fi
     printf "%-25s %-10s %-10s %s\n" "${label}" "${pid}" "${lastexit}" "${last:-(no log yet)}"
-  done
+  done < <(all_services)
 }
 
 cmd_logs() {
   local name="${1:-}"
   if [[ -z "${name}" ]]; then
-    echo "usage: $0 logs <feishu-default|feishu-xiaocao|wechat-default|clawbot-default|cloudflared>" >&2
+    echo "usage: $0 logs <feishu-default|feishu-xiaocao|wechat-default|clawbot-<account>|cloudflared>" >&2
     exit 1
   fi
   local logfile="${LOG_DIR}/cmr.${name}.log"

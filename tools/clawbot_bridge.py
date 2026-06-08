@@ -23,21 +23,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_saved_account_alias(requested: str, state_dir: str) -> str:
-    if requested != "default" or not state_dir:
+    if not state_dir:
         return requested
     accounts_dir = Path(state_dir) / "accounts"
     if not accounts_dir.exists():
-        return requested
+        return "default"
     account_files = sorted(
         p for p in accounts_dir.glob("*.json")
         if not p.name.endswith(".context-tokens.json") and not p.name.endswith(".sync.json")
     )
     if len(account_files) != 1:
-        return requested
+        return "default"
     try:
         data = json.loads(account_files[0].read_text(encoding="utf-8"))
     except Exception:
-        return requested
+        return "default"
     return str(data.get("account_id") or requested)
 
 
