@@ -8,6 +8,7 @@ async function handleIncomingMessage(deps, rawEvent) {
     ensureChatState,
     followUpStates,
     persistState,
+    selectEngineForChatState,
   } = deps;
 
   // Engine-neutral aliases — accept new (runExec/execInput) or legacy (runClaudeExec/claudeExecInput) names
@@ -52,6 +53,18 @@ async function handleIncomingMessage(deps, rawEvent) {
     const prompt = history.length > 0
       ? buildPromptWithHistory(history, currentPrompt)
       : currentPrompt;
+    const selectedEngine = typeof selectEngineForChatState === 'function'
+      ? selectEngineForChatState({ chatState, event, deps })
+      : null;
+    const runExecForMessage = selectedEngine && typeof selectedEngine.runExec === 'function'
+      ? selectedEngine.runExec
+      : runExec;
+    const execInputForMessage = selectedEngine && selectedEngine.execInput
+      ? selectedEngine.execInput
+      : execInput;
+    const execDepsForMessage = selectedEngine && selectedEngine.execDeps
+      ? selectedEngine.execDeps
+      : execDeps;
 
     // Create a per-message output directory so Claude writes files to an isolated location
     const fs = require('node:fs');
@@ -71,9 +84,9 @@ async function handleIncomingMessage(deps, rawEvent) {
       }
     };
 
-    const result = await runExec(
-      execDeps,
-      { ...execInput, prompt, outputDir, onChunk }
+    const result = await runExecForMessage(
+      execDepsForMessage,
+      { ...execInputForMessage, prompt, outputDir, onChunk }
     );
 
     // Collect files Claude wrote to the output directory
@@ -92,16 +105,22 @@ async function handleIncomingMessage(deps, rawEvent) {
     const finalCard = botReply && botReply.card;
     const directiveFilePaths = (botReply && botReply.filePaths) || [];
 
-    if (replyMessageId && finalCard) {
-      await replyGateway.patchCardReply(replyMessageId, finalCard).catch(() =>
-        replyGateway.sendReply(event.messageId, finalCard)
-      );
-    } else {
-      await replyGateway.sendReply(event.messageId, finalCard || botReply);
+    // Send files: directive-specified + files Claude wrote to outputDir
+    const allFilePaths = selectFilesForReply(
+      [...new Set([...directiveFilePaths, ...newTmpFiles])],
+      deps
+    );
+
+    if (allFilePaths.length === 0 || !deps.omitTextReplyWhenFiles) {
+      if (replyMessageId && finalCard) {
+        await replyGateway.patchCardReply(replyMessageId, finalCard).catch(() =>
+          replyGateway.sendReply(event.messageId, finalCard)
+        );
+      } else {
+        await replyGateway.sendReply(event.messageId, finalCard || botReply);
+      }
     }
 
-    // Send files: directive-specified + files Claude wrote to outputDir
-    const allFilePaths = [...new Set([...directiveFilePaths, ...newTmpFiles])];
     for (const fp of allFilePaths) {
       if (typeof replyGateway.sendFileReply === 'function') {
         await replyGateway.sendFileReply(event.messageId, fp).catch(() => {});
@@ -112,7 +131,7 @@ async function handleIncomingMessage(deps, rawEvent) {
     try { fs.rmSync(outputDir, { recursive: true, force: true }); } catch (_) {}
 
     appendHistory(chatState, currentPrompt, result.replyText);
-    refreshFollowUpWindow(chatState);
+    refreshFollowUpWindow(chatState, { ttlMs: deps.followUpTtlMs });
     if (typeof persistState === 'function') persistState();
 
     statusStore.markIdle({ taskKey });
@@ -129,6 +148,13 @@ async function handleIncomingMessage(deps, rawEvent) {
       }
     } catch (_) {}
   }
+}
+
+function selectFilesForReply(filePaths, options = {}) {
+  if (!options.preferPdfOnlyWhenFiles) return filePaths;
+  const path = require('node:path');
+  const pdfs = filePaths.filter((fp) => path.extname(fp).toLowerCase() === '.pdf');
+  return pdfs.length > 0 ? pdfs : filePaths;
 }
 
 function buildProgressCard(charCount, errorMsg) {
@@ -180,4 +206,5 @@ module.exports = {
   handleIncomingMessage,
   buildPromptFromEvent,
   buildPromptWithHistory,
+  selectFilesForReply,
 };

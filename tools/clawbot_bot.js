@@ -38,6 +38,40 @@ function renderBotReply(text) {
   return { ...renderWechatReply(cleanText), filePaths };
 }
 
+function parseEngineCommand(text) {
+  const normalized = String(text || '').trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === '/codex') {
+    return { type: 'set_engine', engineName: 'codex' };
+  }
+
+  if (normalized === '/claude') {
+    return { type: 'set_engine', engineName: 'claude' };
+  }
+
+  if (normalized === '/engine') {
+    return { type: 'query_engine' };
+  }
+
+  const parts = normalized.split(/\s+/);
+  if (parts.length === 2 && parts[0] === '/engine' && (parts[1] === 'codex' || parts[1] === 'claude')) {
+    return { type: 'set_engine', engineName: parts[1] };
+  }
+
+  return null;
+}
+
+function resolveClawbotEngine(config, chatState) {
+  const engineName = String((chatState && chatState.engineName) || config.engine || 'claude').trim().toLowerCase();
+  const engine = resolveEngine({ ...config, engine: engineName });
+  return {
+    engineName: engine.name,
+    runExec: engine.runExec,
+    execInput: engine.buildInput({ config, accountName: config.accountName || 'default' }),
+  };
+}
+
 function checkPython(pythonBin) {
   try {
     execFileSync(pythonBin, ['--version'], { timeout: 5000, stdio: 'ignore' });
@@ -70,6 +104,38 @@ function createBotRuntime(deps) {
   let shuttingDown = false;
   const seenMessageIds = new Set();
   const startTime = Date.now();
+  const defaultEngineName = String(deps.defaultEngineName || 'claude').trim().toLowerCase();
+
+  async function handleEngineCommand(normalized) {
+    const chatState = deps.ensureChatState(deps.followUpStates, normalized.taskKey);
+    const command = parseEngineCommand(normalized.text);
+    if (!command) return false;
+
+    statusStore.markBusy({ taskKey: normalized.taskKey });
+    try {
+      if (command.type === 'query_engine') {
+        const currentEngine = chatState.engineName || defaultEngineName;
+        await deps.replyGateway.sendTextReply(normalized.messageId, `当前引擎：${currentEngine}`);
+        statusStore.markIdle({ taskKey: normalized.taskKey });
+        return true;
+      }
+
+      chatState.engineName = command.engineName;
+      if (deps.refreshFollowUpWindow) {
+        deps.refreshFollowUpWindow(chatState, { ttlMs: deps.followUpTtlMs });
+      }
+      if (typeof deps.persistState === 'function') deps.persistState();
+      await deps.replyGateway.sendTextReply(normalized.messageId, `已切换到 ${command.engineName}`);
+      statusStore.markIdle({ taskKey: normalized.taskKey });
+      return true;
+    } catch (err) {
+      statusStore.markError({ taskKey: normalized.taskKey, error: String(err.message || err) });
+      try {
+        await deps.replyGateway.sendTextReply(normalized.messageId, `⚠️ ${err.message || err}`);
+      } catch (_) {}
+      return true;
+    }
+  }
 
   return {
     onMessage(rawEvent) {
@@ -103,6 +169,13 @@ function createBotRuntime(deps) {
           userId: normalized.userId,
           status: 1,
         }).catch(() => {});
+      }
+
+      if (parseEngineCommand(normalized.text)) {
+        taskQueue.enqueue(normalized.taskKey, () => handleEngineCommand(normalized)).catch((err) => {
+          console.error('CLAWBOT_TASK_ERROR taskKey=' + normalized.taskKey, err.message);
+        });
+        return;
       }
 
       taskQueue.enqueue(normalized.taskKey, () =>
@@ -182,7 +255,18 @@ function main() {
     refreshFollowUpWindow,
     ensureChatState,
     execInput: engine.buildInput({ config, accountName }),
+    followUpTtlMs: Number(config.follow_up_ttl_hours || config.followUpTtlHours || 24) * 60 * 60 * 1000,
+    omitTextReplyWhenFiles: true,
+    preferPdfOnlyWhenFiles: true,
     persistState: () => saveStates(followUpStates, 'clawbot-' + accountName),
+    selectEngineForChatState: ({ chatState }) => {
+      const selected = resolveClawbotEngine({ ...config, accountName }, chatState);
+      return {
+        runExec: selected.runExec,
+        execInput: selected.execInput,
+      };
+    },
+    defaultEngineName: engine.name,
   });
 
   bridge.on('message', (event) => {
@@ -223,7 +307,9 @@ if (require.main === module) {
 module.exports = {
   createBotRuntime,
   main,
+  parseEngineCommand,
   prepareRuntimeEvent,
   readArg,
   renderBotReply,
+  resolveClawbotEngine,
 };

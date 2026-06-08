@@ -4,6 +4,7 @@ function ensureChatState(states, key) {
       key,
       currentThread: null,
       history: [],
+      engineName: null,
     });
   }
 
@@ -43,7 +44,11 @@ function saveStates(followUpStates, account = 'default') {
   fs.mkdirSync(path.dirname(statePath), { recursive: true });
   const data = {};
   for (const [key, state] of followUpStates.entries()) {
-    data[key] = { history: state.history || [], expiresAt: state.expiresAt || null };
+    data[key] = {
+      history: state.history || [],
+      expiresAt: state.expiresAt || null,
+      engineName: state.engineName || null,
+    };
   }
   fs.writeFileSync(statePath, JSON.stringify(data), 'utf8');
 }
@@ -58,9 +63,18 @@ function loadStates(account = 'default') {
     const data = JSON.parse(fs.readFileSync(statePath, 'utf8'));
     const now = Date.now();
     for (const [key, saved] of Object.entries(data)) {
-      if (saved.expiresAt && saved.expiresAt > now && saved.history && saved.history.length > 0) {
-        map.set(key, { key, currentThread: null, history: saved.history, expiresAt: saved.expiresAt });
-      }
+      const hasHistory = Array.isArray(saved.history) && saved.history.length > 0;
+      const engineName = typeof saved.engineName === 'string' && saved.engineName ? saved.engineName : null;
+      if (!hasHistory && !engineName) continue;
+
+      const expiresAt = saved.expiresAt && saved.expiresAt > now ? saved.expiresAt : null;
+      map.set(key, {
+        key,
+        currentThread: null,
+        history: expiresAt ? saved.history : [],
+        expiresAt,
+        engineName,
+      });
     }
   } catch (_) {}
   return map;
