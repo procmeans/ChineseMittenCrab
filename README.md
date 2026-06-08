@@ -391,6 +391,10 @@ feishu_ws_bot.js          入口，WebSocket 连接，消息去重，队列调�
 - 订阅事件：`im.message.receive_v1`
 - 权限：`im:message`、`im:message:send_as_bot`、`im:file`（如需文件功能）
 
+## 致谢
+
+感谢 [suncodexclaw](https://github.com/procmeans/suncodexclaw) 项目为本项目的本机执行机器人架构、飞书工作流接入和 LaunchAgent 运维方式提供了重要参考。
+
 ## 联系开发者
 
 - 微信：18038001212
