@@ -91,6 +91,28 @@ final class BotManagerTests: XCTestCase {
         XCTAssertNil(LogService.extractLoginQR(fromLog: "普通日志\n登录成功"))
     }
 
+    // MARK: 沙箱 deny.json 解析/序列化
+
+    func testSandboxParseDenyPathsObject() {
+        let data = Data(#"{"denyPaths":["/Users/me/secret","/Users/me/.ssh"]}"#.utf8)
+        XCTAssertEqual(SandboxConfig.parse(data), ["/Users/me/secret", "/Users/me/.ssh"])
+    }
+
+    func testSandboxParseBareArray() {
+        let data = Data(#"["/a","/b"]"#.utf8)
+        XCTAssertEqual(SandboxConfig.parse(data), ["/a", "/b"])
+    }
+
+    func testSandboxParseGarbageReturnsEmpty() {
+        XCTAssertEqual(SandboxConfig.parse(Data("not json".utf8)), [])
+    }
+
+    func testSandboxSerializeRoundTrip() {
+        let paths = ["/Users/me/Documents/rainwe games", "/Users/me/.aws"]
+        let data = SandboxConfig.serialize(paths)
+        XCTAssertEqual(SandboxConfig.parse(data), paths)
+    }
+
     // MARK: 日志尾部
 
     func testLogTailReadsLastLines() throws {

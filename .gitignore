@@ -7,6 +7,8 @@ config/feishu/*.json
 !config/feishu/*.example.json
 config/wechat/*.json
 !config/wechat/*.example.json
+config/sandbox/*.json
+!config/sandbox/*.example.json
 
 # Runtime logs
 logs/
