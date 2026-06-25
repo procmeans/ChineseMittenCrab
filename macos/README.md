@@ -1,4 +1,7 @@
-# 大闸蟹机器人管理器 (macOS Bot Manager)
+# Crab Bot Manager (macOS)
+
+![logo](AppIcon.png)
+
 
 一个原生 SwiftUI 的本地控制面板，用来管理这台 Mac 上跑的多个机器人实例——查看状态、启动/停止/重启、看日志、给 ClawBot 扫码登录。
 
@@ -20,7 +23,7 @@
 ```bash
 # 打包成可双击的 .app
 ./macos/build_app.sh release
-open "macos/dist/大闸蟹机器人管理器.app"
+open "macos/dist/Crab Bot Manager.app"
 
 # 开发期直接跑
 cd macos/BotManager && swift run

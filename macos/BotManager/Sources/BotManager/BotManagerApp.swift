@@ -5,7 +5,7 @@ struct BotManagerApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("大闸蟹机器人管理器") {
+        WindowGroup("Crab Bot Manager") {
             ContentView()
                 .environmentObject(model)
                 .frame(minWidth: 860, minHeight: 560)
