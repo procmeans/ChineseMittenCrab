@@ -17,3 +17,7 @@ logs/
 
 # Local overrides of CLAUDE.md and similar
 *.local
+
+# macOS Bot Manager app build artifacts
+macos/BotManager/.build/
+macos/dist/
