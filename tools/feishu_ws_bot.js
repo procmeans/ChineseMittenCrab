@@ -228,6 +228,7 @@ function main() {
     refreshFollowUpWindow,
     ensureChatState,
     execInput: engine.buildInput({ config, accountName }),
+    followUpTtlMs: Number(config.follow_up_ttl_hours || config.followUpTtlHours || 24) * 60 * 60 * 1000,
     persistState: () => saveStates(followUpStates, accountName),
     // selfOpenId is read lazily via runtimeRef each onMessage call (it's filled in asynchronously
     // by getBotOpenId above; until then the filter is bypassed).

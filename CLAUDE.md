@@ -18,6 +18,8 @@ node tools/wechat_bot.js --account default     # start WeChat bot (HTTP callback
 node tools/wechat_bot.js --account default --dry-run     # validate WeChat config
 node tools/wechat_bot.js --account default --port 9090   # custom port
 node tools/feishu_monitor_server.js            # start monitor HTTP server on :3000
+node tools/wechat_monitor_server.js            # start wechat conversation viewer on :3001
+node tools/wechat_monitor_server.js --port 3002 --log /path/to/other.log  # custom port/log
 ```
 
 ## Architecture

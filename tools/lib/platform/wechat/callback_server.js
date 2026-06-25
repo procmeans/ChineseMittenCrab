@@ -1,6 +1,61 @@
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const { URL } = require('node:url');
 const { verifySignature, decryptMessage, encryptMessage } = require('./crypto');
+
+/** Directory for static files (tools/public/) */
+const STATIC_DIR = path.join(__dirname, '..', '..', '..', 'public');
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css':  'text/css; charset=utf-8',
+  '.js':   'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif':  'image/gif',
+  '.svg':  'image/svg+xml',
+  '.ico':  'image/x-icon',
+  '.webp': 'image/webp',
+  '.txt':  'text/plain; charset=utf-8',
+};
+
+/**
+ * Try to serve a static file from STATIC_DIR. Returns true if served, false otherwise.
+ */
+function tryServeStatic(req, res, pathname) {
+  // Only serve GET/HEAD for static files
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+
+  // Prevent directory traversal
+  const safePath = path.normalize(pathname).replace(/^(\.\.(\/|\\|$))+/, '');
+  let filePath = path.join(STATIC_DIR, safePath);
+
+  // If requesting '/' serve index.html
+  if (safePath === '/' || safePath === '' || safePath === '.') {
+    filePath = path.join(STATIC_DIR, 'index.html');
+  }
+
+  // Ensure resolved path is within STATIC_DIR
+  if (!filePath.startsWith(STATIC_DIR)) return false;
+
+  try {
+    const stat = fs.statSync(filePath);
+    if (!stat.isFile()) return false;
+
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = MIME_TYPES[ext] || 'application/octet-stream';
+    const content = fs.readFileSync(filePath);
+    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': content.length });
+    if (req.method === 'HEAD') { res.end(); } else { res.end(content); }
+    console.log('STATIC_SERVE path=' + pathname + ' file=' + path.basename(filePath) + ' size=' + content.length);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 /**
  * Extract a single XML element's text content. Supports both CDATA-wrapped and bare values.
@@ -68,7 +123,8 @@ function createCallbackServer({ token, encodingAesKey, appId, onMessage, port })
       return;
     }
 
-    if (req.method === 'GET') {
+    // WeChat verification (GET with msg_signature/echostr)
+    if (req.method === 'GET' && msgSignature && url.searchParams.has('echostr')) {
       handleVerification(req, res, { token, encodingAesKey, msgSignature, timestamp, nonce, url });
       return;
     }
@@ -77,6 +133,9 @@ function createCallbackServer({ token, encodingAesKey, appId, onMessage, port })
       handleMessage(req, res, { token, encodingAesKey, appId, msgSignature, timestamp, nonce, onMessage });
       return;
     }
+
+    // Static file serving (GET/HEAD without WeChat callback params → try public/ folder)
+    if (tryServeStatic(req, res, url.pathname)) return;
 
     res.writeHead(405);
     res.end('Method Not Allowed');
