@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { handleIncomingMessage, buildPromptFromEvent } = require('../tools/lib/runtime/message_handler');
 const { createBotRuntime } = require('../tools/feishu_ws_bot');
@@ -62,6 +64,9 @@ function createStubDeps(overrides = {}) {
       sendReply: async (messageId, rendered) => {
         calls.push({ method: 'sendReply', messageId, rendered });
       },
+      sendFileReply: async (messageId, filePath) => {
+        calls.push({ method: 'sendFileReply', messageId, filePath });
+      },
     },
     runClaudeExec: overrides.runClaudeExec || (async () => ({
       replyText: 'Claude says hi',
@@ -92,6 +97,45 @@ test('happy path: event → Claude → reply sent, status idle→busy→idle', a
   // Final response patches the progress card in-place
   const finalPatch = deps.calls.find((c) => c.method === 'patchCardReply');
   assert.ok(finalPatch);
+});
+
+test('file-only mode sends only generated PDFs and skips text reply', async () => {
+  const deps = createStubDeps({
+    prepareRuntimeEvent: async () => ({
+      taskKey: 'user-1',
+      chatId: 'user-1',
+      senderId: 'user-1',
+      messageId: 'msg-pdf-only',
+      text: 'generate pdf',
+      chatType: 'p2p',
+      files: [],
+      quotedText: '',
+      createTime: Date.now(),
+    }),
+    renderBotReply: () => ({
+      mode: 'text',
+      text: 'PDF 已生成: /tmp/cmr-out/msg-pdf-only/report.pdf',
+      filePaths: [],
+    }),
+    runClaudeExec: async (_deps, input) => {
+      fs.writeFileSync(path.join(input.outputDir, 'gen_report.py'), 'print("helper")');
+      fs.writeFileSync(path.join(input.outputDir, 'report.pdf'), '%PDF-1.4');
+      return {
+        replyText: 'PDF 已生成: /tmp/cmr-out/msg-pdf-only/report.pdf',
+        raw: '',
+        stderr: '',
+      };
+    },
+  });
+  deps.omitTextReplyWhenFiles = true;
+  deps.preferPdfOnlyWhenFiles = true;
+
+  await handleIncomingMessage(deps, {});
+
+  assert.equal(deps.calls.some((c) => c.method === 'sendReply'), false);
+  const fileCalls = deps.calls.filter((c) => c.method === 'sendFileReply');
+  assert.equal(fileCalls.length, 1);
+  assert.equal(path.basename(fileCalls[0].filePath), 'report.pdf');
 });
 
 test('Claude error: error reply sent, status → error', async () => {
@@ -146,6 +190,18 @@ test('follow-up window is refreshed after reply', async () => {
   const chatState = deps.followUpStates.get(taskKey);
   assert.ok(chatState);
   assert.ok(chatState.expiresAt > Date.now());
+});
+
+test('follow-up window can use a custom ttl', async () => {
+  const now = Date.now();
+  const deps = createStubDeps();
+  deps.followUpTtlMs = 24 * 60 * 60 * 1000;
+  const event = createFixtureEvent();
+
+  await handleIncomingMessage(deps, event);
+
+  const chatState = deps.followUpStates.get('chat-1::user-1');
+  assert.ok(chatState.expiresAt >= now + (24 * 60 * 60 * 1000) - 1000);
 });
 
 test('onMessage returns immediately without waiting for task to complete', async () => {

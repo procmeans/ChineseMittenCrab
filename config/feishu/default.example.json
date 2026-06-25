@@ -1,5 +1,6 @@
 {
   "feishu": {
     "bot_name": "ChineseMittenCrab"
-  }
+  },
+  "follow_up_ttl_hours": 24
 }
