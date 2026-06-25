@@ -15,6 +15,19 @@
 - **生命周期**：单实例 启动 / 停止 / 重启；侧边栏一键 安装全部 / 卸载全部
 - **日志查看**：每 3 秒刷新各实例日志末尾 200 行（`~/Library/Logs/cmr/cmr.<name>.log`）
 - **ClawBot 扫码**：自动从该实例日志的 `CLAWBOT_LOGIN_QR` 提取二维码并渲染，用微信扫码即可登录该实例
+- **禁止访问的文件夹（沙箱）**：在「设置」里加入文件夹，机器人进程会被内核级 seatbelt 沙箱（`sandbox-exec`）禁止读/写——连 shell 都绕不过，防止有人借机器人转发敏感文件
+
+## 文件访问沙箱
+
+防的是「有人通过聊天诱导机器人去读你电脑里的敏感文件再转发出去」。
+
+- 名单存在 `config/sandbox/deny.json`（`{"denyPaths":[...]}`），App 设置页可视化编辑。
+- `tools/sandbox_profile.sh gen` 据此生成 seatbelt profile（`~/Library/Application Support/cmr/sandbox/deny.sb`），自动补上 APFS firmlink 备用路径 `/System/Volumes/Data/...`。
+- `tools/launchd_ctl.sh install` 时若名单非空，plist 的启动命令会变成
+  `/usr/bin/sandbox-exec -f <profile> node <script> …`，内核层拒绝对名单内文件夹的一切读写。
+- 在 App 里点「应用并重启全部机器人」即生效（= 写 deny.json + 重装服务）。
+
+> 注：`sandbox-exec` 被 Apple 标为 deprecated，但当前 macOS 仍可用。追求永久支持的强隔离可改用「独立低权限 macOS 用户 + 文件 ACL」。
 
 ## 构建运行
 

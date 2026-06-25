@@ -1,0 +1,9 @@
+{
+  "_comment": "机器人被内核级 seatbelt 沙箱禁止读/写的绝对路径。由 tools/launchd_ctl.sh 在 install 时生成 profile，启动 node 进程时用 sandbox-exec 包住。复制为 deny.json 后生效；也可在 Crab Bot Manager 的设置里编辑。",
+  "denyPaths": [
+    "/Users/you/Documents/some-secret-folder",
+    "/Users/you/.ssh",
+    "/Users/you/.aws",
+    "/Users/you/Library/Keychains"
+  ]
+}

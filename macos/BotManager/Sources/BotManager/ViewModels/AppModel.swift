@@ -11,6 +11,9 @@ final class AppModel: ObservableObject {
     @Published var busy: Set<String> = []                // 正在执行操作的 bot.name
     @Published var lastError: String?
 
+    @Published var denyPaths: [String] = []              // 禁止机器人访问的文件夹
+    @Published var applyingSandbox = false
+
     private var service: LaunchctlService
     private var timer: Timer?
 
@@ -25,7 +28,49 @@ final class AppModel: ObservableObject {
 
     func onAppear() {
         reloadBots()
+        loadDenyPaths()
         startTimer()
+    }
+
+    // MARK: - 沙箱：禁止访问的文件夹
+
+    func loadDenyPaths() {
+        denyPaths = SandboxConfig(repoRoot: repoRoot).load()
+    }
+
+    func addDenyPath(_ path: String) {
+        let p = path.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty, !denyPaths.contains(p) else { return }
+        denyPaths.append(p)
+    }
+
+    func removeDenyPath(_ path: String) {
+        denyPaths.removeAll { $0 == path }
+    }
+
+    /// 写入 deny.json 并重装所有服务（生成 seatbelt profile 并用 sandbox-exec 包住机器人）。
+    func applySandbox() {
+        applyingSandbox = true
+        lastError = nil
+        let svc = service
+        let cfg = SandboxConfig(repoRoot: repoRoot)
+        let paths = denyPaths
+        Task.detached {
+            let err: String? = {
+                do {
+                    try cfg.save(paths)
+                    let res = svc.installScope("all")
+                    return res.ok ? nil : "重装失败：\(res.stderr.isEmpty ? res.stdout : res.stderr)"
+                } catch {
+                    return "写入 deny.json 失败：\(error.localizedDescription)"
+                }
+            }()
+            await MainActor.run {
+                self.applyingSandbox = false
+                self.lastError = err
+            }
+            await self.refreshStatuses()
+        }
     }
 
     func setRepoRoot(_ path: String) {
@@ -33,6 +78,7 @@ final class AppModel: ObservableObject {
         repoRoot = path
         service = LaunchctlService(repoRoot: path)
         reloadBots()
+        loadDenyPaths()
     }
 
     func reloadBots() {
