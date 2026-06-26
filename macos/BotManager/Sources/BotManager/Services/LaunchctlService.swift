@@ -101,6 +101,14 @@ struct LaunchctlService {
         Shell.run("/bin/launchctl", ["kickstart", "-k", domainTarget(record.label)])
     }
 
+    /// 卸载单个服务并删除其 plist —— 删账号时用，只动这一个，不影响其它 ClawBot 账号。
+    @discardableResult
+    func removeService(_ record: BotRecord) -> Shell.Result {
+        let res = Shell.run("/bin/launchctl", ["bootout", domainTarget(record.label)])
+        try? FileManager.default.removeItem(atPath: record.plistPath)
+        return res
+    }
+
     // MARK: - 批量（复用 launchd_ctl.sh）
 
     private func scopeFor(_ record: BotRecord) -> String {

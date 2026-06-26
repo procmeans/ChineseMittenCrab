@@ -1,0 +1,15 @@
+{
+  "engine": "codex",
+  "codex": {
+    "bin": "codex",
+    "model": "gpt-5.4",
+    "reasoning_effort": "medium",
+    "cwd": "/Users/procmeans/Documents/ChineseMittenCrab",
+    "sandbox": "danger-full-access",
+    "approval_policy": "never",
+    "timeout_sec": 0
+  },
+  "python_bin": ".venv-clawbot/bin/python",
+  "state_dir": ".clawbot-state-fifth",
+  "follow_up_ttl_hours": 24
+}

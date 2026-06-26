@@ -7,6 +7,7 @@ struct BotDetailView: View {
     @State private var logText: String = ""
     @State private var qrContent: String?
     @State private var logTimer: Timer?
+    @State private var showDeleteConfirm = false
 
     private var status: BotStatus { model.status(for: bot) }
     private var isBusy: Bool { model.busy.contains(bot.name) }
@@ -64,9 +65,26 @@ struct BotDetailView: View {
             } label: { Label("停止", systemImage: "stop.fill") }
                 .disabled(isBusy || !status.installed)
 
+            if bot.type == .clawbot {
+                Button(role: .destructive) {
+                    showDeleteConfirm = true
+                } label: { Label("删除账号", systemImage: "trash") }
+                    .disabled(isBusy)
+            }
+
             if isBusy { ProgressView().controlSize(.small) }
         }
         .buttonStyle(.bordered)
+        .confirmationDialog(
+            "删除账号 \(bot.account ?? "")？",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) { model.deleteClawbotAccount(bot) }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("会停止该服务、删除其 plist、config/clawbot/\(bot.account ?? "").json 及登录状态目录。此操作不可撤销。")
+        }
     }
 
     // MARK: status card

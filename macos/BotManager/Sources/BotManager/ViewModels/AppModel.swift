@@ -161,6 +161,75 @@ final class AppModel: ObservableObject {
     func status(for bot: BotRecord) -> BotStatus {
         statuses[bot.name] ?? .unknown
     }
+
+    // MARK: - 新建 / 删除 ClawBot 账号
+
+    @Published var creatingAccount = false
+
+    /// 新建一个 ClawBot 账号：写 config/clawbot/<account>.json（codex 再补人设），
+    /// 然后 install clawbot 注册并启动该 launchd 服务，最后刷新列表并选中它。
+    /// completion 在主线程回调，error 为 nil 表示成功。
+    func createClawbotAccount(_ spec: ClawbotAccountService.Spec, completion: @escaping (String?) -> Void) {
+        creatingAccount = true
+        lastError = nil
+        let svc = service
+        let accounts = ClawbotAccountService(repoRoot: repoRoot)
+        let newName = "clawbot-\(spec.account)"
+        Task.detached {
+            let err: String? = {
+                do {
+                    try accounts.create(spec)
+                } catch {
+                    return error.localizedDescription
+                }
+                // install clawbot：注册新账号的 plist 并启动（与「启动」未安装实例时同款行为）。
+                let res = svc.installScope("clawbot")
+                if !res.ok {
+                    return "配置已写入，但注册服务失败：\(res.stderr.isEmpty ? res.stdout : res.stderr)"
+                }
+                return nil
+            }()
+            let discovered = svc.discover()
+            await MainActor.run {
+                self.creatingAccount = false
+                self.lastError = err
+                self.bots = discovered
+                if err == nil { self.selection = newName }
+                completion(err)
+            }
+            await self.refreshStatuses()
+        }
+    }
+
+    /// 删除一个 ClawBot 账号：先 bootout 并删该服务 plist（只动这一个），
+    /// 再删 config 与状态目录，最后刷新列表。仅对 clawbot 类型有效。
+    func deleteClawbotAccount(_ bot: BotRecord) {
+        guard bot.type == .clawbot, let account = bot.account else { return }
+        busy.insert(bot.name)
+        lastError = nil
+        let svc = service
+        let accounts = ClawbotAccountService(repoRoot: repoRoot)
+        Task.detached {
+            svc.removeService(bot)               // bootout + 删 plist（单个）
+            let err: String? = {
+                do {
+                    try accounts.delete(account: account)
+                    return nil
+                } catch {
+                    return error.localizedDescription
+                }
+            }()
+            let discovered = svc.discover()
+            await MainActor.run {
+                self.busy.remove(bot.name)
+                self.lastError = err
+                self.bots = discovered
+                if self.selection == bot.name { self.selection = discovered.first?.name }
+                self.statuses[bot.name] = nil
+            }
+            await self.refreshStatuses()
+        }
+    }
 }
 
 enum BotAction {

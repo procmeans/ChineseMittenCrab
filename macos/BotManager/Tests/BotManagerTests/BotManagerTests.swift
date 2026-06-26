@@ -126,4 +126,76 @@ final class BotManagerTests: XCTestCase {
         XCTAssertEqual(tailLines.last, "line 500")
         XCTAssertLessThanOrEqual(tailLines.count, 10)
     }
+
+    // MARK: ClawBot 账号 —— 名字校验
+
+    func testClawbotNameValidation() {
+        XCTAssertTrue(ClawbotAccountService.isValidAccountName("fifth"))
+        XCTAssertTrue(ClawbotAccountService.isValidAccountName("friend_2"))
+        XCTAssertTrue(ClawbotAccountService.isValidAccountName("a-b-c"))
+        XCTAssertFalse(ClawbotAccountService.isValidAccountName(""))
+        XCTAssertFalse(ClawbotAccountService.isValidAccountName("example"))
+        XCTAssertFalse(ClawbotAccountService.isValidAccountName("has space"))
+        XCTAssertFalse(ClawbotAccountService.isValidAccountName("../escape"))
+        XCTAssertFalse(ClawbotAccountService.isValidAccountName("-leading"))
+    }
+
+    func testClawbotStateDirNaming() {
+        XCTAssertEqual(ClawbotAccountService.defaultStateDir(for: "default"), ".clawbot-state")
+        XCTAssertEqual(ClawbotAccountService.defaultStateDir(for: "fifth"), ".clawbot-state-fifth")
+    }
+
+    // MARK: ClawBot 账号 —— 配置 JSON 生成
+
+    func testClawbotConfigJSONClaude() throws {
+        let spec = ClawbotAccountService.Spec(account: "friend", engine: .claude)
+        let obj = try parsedConfig(ClawbotAccountService.configJSON(for: spec))
+        XCTAssertEqual(obj["engine"] as? String, "claude")
+        XCTAssertEqual(obj["state_dir"] as? String, ".clawbot-state-friend")
+        XCTAssertEqual(obj["python_bin"] as? String, ".venv-clawbot/bin/python")
+        XCTAssertEqual(obj["model"] as? String, "")
+        XCTAssertNil(obj["codex"])
+    }
+
+    func testClawbotConfigJSONCodex() throws {
+        let spec = ClawbotAccountService.Spec(
+            account: "fifth", engine: .codex,
+            codexCwd: "/Users/me/Documents/App Factory/x", codexModel: "gpt-5.4"
+        )
+        let obj = try parsedConfig(ClawbotAccountService.configJSON(for: spec))
+        XCTAssertEqual(obj["engine"] as? String, "codex")
+        let codex = try XCTUnwrap(obj["codex"] as? [String: Any])
+        XCTAssertEqual(codex["cwd"] as? String, "/Users/me/Documents/App Factory/x")
+        XCTAssertEqual(codex["model"] as? String, "gpt-5.4")
+        XCTAssertEqual(codex["sandbox"] as? String, "danger-full-access")
+        XCTAssertEqual(codex["approval_policy"] as? String, "never")
+    }
+
+    // MARK: ClawBot 账号 —— 建/删往返
+
+    func testClawbotCreateAndDeleteRoundTrip() throws {
+        let root = NSTemporaryDirectory() + "cmr-claw-\(getpid())"
+        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: root) }
+
+        let svc = ClawbotAccountService(repoRoot: root)
+        XCTAssertFalse(svc.accountExists("friend"))
+
+        try svc.create(ClawbotAccountService.Spec(account: "friend", engine: .claude))
+        XCTAssertTrue(svc.accountExists("friend"))
+        XCTAssertEqual(svc.stateDirFromConfig("friend"), ".clawbot-state-friend")
+
+        // 重复创建应报已存在
+        XCTAssertThrowsError(try svc.create(ClawbotAccountService.Spec(account: "friend")))
+
+        try svc.delete(account: "friend")
+        XCTAssertFalse(svc.accountExists("friend"))
+        // 删不存在的账号应报错
+        XCTAssertThrowsError(try svc.delete(account: "friend"))
+    }
+
+    private func parsedConfig(_ json: String) throws -> [String: Any] {
+        let data = Data(json.utf8)
+        return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
 }

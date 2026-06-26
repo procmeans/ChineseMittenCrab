@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @State private var showSettings = false
+    @State private var showNewAccount = false
+    @State private var pendingDelete: BotRecord?
 
     var body: some View {
         NavigationSplitView {
@@ -17,6 +19,11 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showNewAccount = true
+                } label: {
+                    Label("新建 ClawBot 账号", systemImage: "plus")
+                }
                 Button {
                     Task { await model.refreshStatuses() }
                 } label: {
@@ -33,6 +40,23 @@ struct ContentView: View {
             SettingsView()
                 .environmentObject(model)
         }
+        .sheet(isPresented: $showNewAccount) {
+            NewClawbotAccountView()
+                .environmentObject(model)
+        }
+        .confirmationDialog(
+            "删除账号 \(pendingDelete?.account ?? "")？",
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) {
+                if let bot = pendingDelete { model.deleteClawbotAccount(bot) }
+                pendingDelete = nil
+            }
+            Button("取消", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("会停止该服务、删除其 plist、config/clawbot/\(pendingDelete?.account ?? "").json 及登录状态目录。此操作不可撤销。")
+        }
     }
 
     private var sidebar: some View {
@@ -41,6 +65,13 @@ struct ContentView: View {
                 ForEach(model.bots) { bot in
                     BotRow(bot: bot, status: model.status(for: bot))
                         .tag(bot.name)
+                        .contextMenu {
+                            if bot.type == .clawbot {
+                                Button("删除账号…", role: .destructive) {
+                                    pendingDelete = bot
+                                }
+                            }
+                        }
                 }
             }
         }
