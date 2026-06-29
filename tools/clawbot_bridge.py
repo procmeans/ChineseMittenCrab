@@ -13,6 +13,13 @@ from typing import Any
 from wechat_clawbot_sdk.media import download_inbound_media_item
 
 
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+
+def is_image_path(file_path: str) -> bool:
+    return Path(file_path).suffix.lower() in IMAGE_EXTS
+
+
 def emit(payload: dict[str, Any]) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
@@ -193,12 +200,21 @@ async def run() -> int:
                             text=command.get("text", ""),
                         )
                     elif command_type == "send_file":
-                        await client.send_file(
-                            account_id=command.get("account_id") or account_id,
-                            user_id=command["user_id"],
-                            local_path=Path(command["file_path"]),
-                            mime_type=command.get("mime_type") or "application/octet-stream",
-                        )
+                        file_path = command["file_path"]
+                        if is_image_path(file_path):
+                            # 图片走原始图片消息，不当作文件附件发送
+                            await client.send_image(
+                                account_id=command.get("account_id") or account_id,
+                                user_id=command["user_id"],
+                                local_path=Path(file_path),
+                            )
+                        else:
+                            await client.send_file(
+                                account_id=command.get("account_id") or account_id,
+                                user_id=command["user_id"],
+                                local_path=Path(file_path),
+                                mime_type=command.get("mime_type") or "application/octet-stream",
+                            )
                     elif command_type == "send_typing":
                         status_value = command.get("status", int(TypingStatus.TYPING))
                         await client.send_typing(

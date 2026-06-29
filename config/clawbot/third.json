@@ -3,11 +3,11 @@
   "codex": {
     "bin": "codex",
     "model": "gpt-5.4",
-    "reasoning_effort": "medium",
-    "cwd": "/Users/procmeans/Documents/ChineseMittenCrab",
+    "reasoning_effort": "low",
+    "cwd": "/Users/procmeans/Documents/robot/ChineseMittenCrab",
     "sandbox": "danger-full-access",
     "approval_policy": "never",
-    "timeout_sec": 0
+    "timeout_sec": 300
   },
   "python_bin": ".venv-clawbot/bin/python",
   "state_dir": ".clawbot-state-third",

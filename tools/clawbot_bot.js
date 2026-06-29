@@ -13,6 +13,7 @@ const { ensureChatState, saveStates, loadStates } = require('./lib/runtime/threa
 const { resolveEngine } = require('./lib/runtime/engine_selector');
 const { resolvePresetConfig } = require('./lib/config/preset_resolver');
 const { handleIncomingMessage } = require('./lib/runtime/message_handler');
+const { createDelayedWaitNotice } = require('./lib/runtime/lightweight_wait_hint');
 const { normalizeIncomingClawbotEvent } = require('./lib/platform/clawbot/event_projection');
 const { createClawbotReplyGateway } = require('./lib/platform/clawbot/reply_gateway');
 const { createClawbotBridgeProcess } = require('./lib/platform/clawbot/bridge_process');
@@ -178,9 +179,19 @@ function createBotRuntime(deps) {
         return;
       }
 
-      taskQueue.enqueue(normalized.taskKey, () =>
-        handleIncomingMessage(deps, rawEvent)
-      ).catch((err) => {
+      taskQueue.enqueue(normalized.taskKey, async () => {
+        // 慢任务（如出图，常 40-90s）才发一句进度提示；快问答（~15s）不打扰。
+        const waitNotice = createDelayedWaitNotice({}, {
+          delayMs: 20000,
+          sendNotice: () =>
+            deps.replyGateway.sendTextReply(normalized.messageId, '🎨 正在处理中，请稍候…').catch(() => {}),
+        });
+        try {
+          await handleIncomingMessage(deps, rawEvent);
+        } finally {
+          waitNotice.dismiss();
+        }
+      }).catch((err) => {
         console.error('CLAWBOT_TASK_ERROR taskKey=' + normalized.taskKey, err.message);
       });
     },
