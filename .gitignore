@@ -23,3 +23,7 @@ logs/
 # macOS Bot Manager app build artifacts
 macos/BotManager/.build/
 macos/dist/
+
+# Python bytecode cache
+__pycache__/
+*.pyc
